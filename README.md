@@ -1,4 +1,4 @@
-﻿# dsh-model-capability-detector
+# dsh-model-capability-detector
 
 瀵煎叆鎻愪緵鍟嗘椂鑷姩鎺㈡祴骞跺～鍐欐ā鍨嬭兘鍔涳紝鐪佸幓閫愰」鎵嬪～銆?
 > English: [README.en.md](README.en.md)

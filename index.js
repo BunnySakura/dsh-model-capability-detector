@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Model capability detection for imported provider profiles.
  *
  * Saving a provider on the Models page writes it into the profile patch and the

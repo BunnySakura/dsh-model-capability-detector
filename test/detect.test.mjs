@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Workspace checks for the pure detection helpers.
  *
  * Run: node test/detect.test.mjs

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Host-side behaviour checks for `apply()`, driven by a fake Context.
  *
  * Run: node --test test/plugin.test.mjs

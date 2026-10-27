@@ -1,4 +1,4 @@
-﻿# dsh-model-capability-detector
+# dsh-model-capability-detector
 
 Detects and fills in a model's capabilities when you import a provider, instead of
 leaving you to type each field by hand.
