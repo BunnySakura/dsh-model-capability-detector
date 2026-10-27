@@ -72,6 +72,68 @@ Existing values win by default: only blank fields are filled. Set
 The write goes through the settings service, so it lands in the profile's own
 `cordis.patch.yml` and takes effect through the normal Loader path — no restart.
 
+## Public-catalog fallback
+
+Many resale gateways answer `/models` with nothing but `{"id":"...","object":"model"}`,
+disclosing no capability at all. In that case the plugin consults the public
+[models.dev](https://models.dev) catalog (~5.8 MB, cached at
+`$DSH_HOME/cache/model-capability-detector/catalog.json` for 7 days).
+
+**The fallback is per-field, not wholesale**, because one model name means
+different things to different providers — resale channels routinely serve a
+truncated context window. Measured agreement across catalog entries that share a
+name:
+
+| Field | Agreement | Default |
+|---|---|---|
+| Image input | 87.1% | enabled |
+| Reasoning levels | 79.4% | enabled |
+| Context window | 52.1% | **off**, needs `catalogNumbers: true` |
+| Output cap | 47.3% | **off**, needs `catalogNumbers: true` |
+
+An inflated context window silently truncates conversations, which is the worst
+failure mode here; a wrong modality list or reasoning level surfaces immediately
+as an attachment that will not send or a request the API rejects.
+
+Even for an enabled field, a value is written only when **every catalog entry
+carrying that name agrees**. On disagreement the candidates are recorded in the
+log and the configured value is left alone.
+
+### Name normalization
+
+Third-party naming differences are handled in two steps: drop the provider
+segment before the last `/`, then lowercase and keep only alphanumerics. So
+`GPT-6.1-SOL`, `gpt_6_1_sol`, `Gpt-6.1-Sol`, and `openai/gpt-6.1-sol` all reach
+one identity.
+
+Two cases refuse rather than guess:
+
+- **No match**: `gpt-9-ultra`, or a dated `gpt-6.1-sol-2026-01-01`, resolves to
+  `unknown` and is left for you to type.
+- **Ambiguous identity**: when one name can reach two distinct catalog identities
+  (a dated and an undated entry, say), the answer is `ambiguous` — never the
+  first one found.
+
+## Diagnostics log
+
+DSH's logger keeps a 1000-entry in-memory ring and this deployment registers no
+sink that writes to disk, so a failed pass leaves **no record anywhere** —
+"decided not to write" and "never ran" look identical. That is the root cause of
+hard-to-diagnose behaviour.
+
+Set `logFile` to enable an optional JSONL diagnostics log:
+
+```yaml
+    logFile: "~/.dsh/logs/model-capability-detector.log"
+```
+
+It records each probed route, how many fields it disclosed, catalog hits and
+conflicts, and the write plan and result. **No credential is recorded**: URLs are
+stripped of their query string, and neither keys nor response bodies ever reach
+it. A file over 2 MiB is rotated once, keeping one generation.
+
+Empty (the default) disables it and produces no disk writes at all.
+
 ## The HMR transaction constraint
 
 `settings.update` reaches `configEditor.edit`, which wraps its work in
@@ -98,14 +160,21 @@ Edit the row in your profile's `cordis.patch.yml`:
 - id: dsh-model-capability-detector
   name: "dsh-model-capability-detector"
   config:
-    settingsNs: llm-pi-ai   # profile entry id of the adapter whose providers to fill
-    enabled: true           # false turns automatic detection off entirely
-    overwrite: false        # true replaces values you already set
-    dryRun: false           # true only logs the plan, without writing
-    timeoutMs: 15000        # per-endpoint listing timeout, in milliseconds
-    debounceMs: 800         # quiet period after a settings change
-    startupDelayMs: 3000    # delay before the startup pass
+    settingsNs: llm-pi-ai     # profile entry id of the adapter whose providers to fill
+    enabled: true             # false turns automatic detection off entirely
+    overwrite: false          # true replaces values you already set
+    dryRun: false             # true only logs the plan, without writing
+    timeoutMs: 15000          # per-endpoint listing timeout, in milliseconds
+    debounceMs: 800           # quiet period after a settings change
+    startupDelayMs: 3000      # delay before the startup pass
     maxResponseBytes: 4194304
+    catalogFallback: true     # false never queries the public catalog
+    catalogUrl: "https://models.dev/api.json"
+    catalogTimeoutMs: 30000   # catalog download timeout
+    catalogMaxBytes: 16777216 # catalog size ceiling
+    catalogTtlMs: 604800000   # cache lifetime, 7 days by default
+    catalogNumbers: false     # true also trusts context window and output cap
+    logFile: ""               # diagnostics log path; empty disables it
 ```
 
 When onboarding a new gateway, start with `dryRun: true`: the planned changes are
@@ -134,19 +203,24 @@ schedules another probe against the fresh value.
 ## Layout
 
 ```
-index.js              Host plugin: settings listener, endpoint probe, write-back
-lib/detect.js         Pure listing readers: capabilities, levels, URL, headers
-lib/plan.js           Pure merge: discovered capabilities into configured models
-test/detect.test.mjs  Unit tests for both pure modules
-test/plugin.test.mjs  Behaviour tests for apply(), including the HMR scope case
-test/live-probe.mjs   Read-only probe against a public listing
-cordis.patch.yml      The bundle row this package inserts
+index.js                    Host plugin: listener, endpoint probe, fallback, write-back
+lib/detect.js               Pure listing readers: capabilities, levels, URL, headers
+lib/plan.js                 Pure merge with per-field catalog gating
+lib/catalog.js              Pure catalog: index, name matching, agreement, cache
+lib/diagnostics.js          Optional JSONL log with redaction and rotation
+test/detect.test.mjs        Listing parsing and merge unit tests
+test/catalog.test.mjs       Catalog fallback and name-matching unit tests
+test/diagnostics.test.mjs   Redaction, concurrency, and rotation tests
+test/fallback.test.mjs      Fallback integration through the real pass
+test/plugin.test.mjs        Behaviour tests for apply(), including the HMR scope case
+test/live-probe.mjs         Read-only probe against a public listing
+cordis.patch.yml            The bundle row this package inserts
 ```
 
 ## Running the tests
 
 ```bash
-node --test test/detect.test.mjs test/plugin.test.mjs
+node --test test/detect.test.mjs test/catalog.test.mjs test/diagnostics.test.mjs test/fallback.test.mjs test/plugin.test.mjs
 ```
 
 ## Installing
@@ -170,5 +244,9 @@ Once published to npm, it can be installed from the registry directly.
 - Only routes declared by the profile's own layer are handled; bundle-declared
   routes are left to their declaring bundle.
 - Fields an endpoint does not disclose are left as they are, never inferred.
+- The catalog fallback is gated per field: numeric fields are off unless
+  `catalogNumbers: true` is set explicitly.
+- A name that cannot be matched, or that maps to an ambiguous identity, is never
+  written; type it by hand.
 - Host-side only, with no separate UI; results appear in the profile configuration
-  and in the Host log.
+  and in the diagnostics log.

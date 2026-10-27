@@ -44,7 +44,14 @@ function createHarness(options = {}) {
       warn: log('warn'),
       error: log('error'),
     },
-    get: (name) => (name === 'hmr' && options.withHmr === true ? { executing } : undefined),
+    get: (name) => {
+      if (name === 'hmr' && options.withHmr === true) return { executing }
+      if (name === 'dshHomePath' && typeof options.homePath === 'string') {
+        const root = options.homePath
+        return (...segments) => [root, ...segments].join('\\')
+      }
+      return undefined
+    },
     on: (event, handler) => {
       const handlers = listeners.get(event) ?? []
       handlers.push(handler)

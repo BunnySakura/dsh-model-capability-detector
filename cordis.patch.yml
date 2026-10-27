@@ -10,3 +10,6 @@
         overwrite: false
         dryRun: false
         timeoutMs: 15000
+        catalogFallback: true
+        catalogNumbers: false
+        logFile: ""
