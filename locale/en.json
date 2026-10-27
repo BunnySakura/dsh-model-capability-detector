@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model Capability Detector",
+    "description": "Reads a provider's model listing after you import it and fills in each model's context window, image input, and reasoning levels."
+  }
+}

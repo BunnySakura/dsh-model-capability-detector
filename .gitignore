@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Local logs and spill output
+*.log
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local packaging output
+*.tgz

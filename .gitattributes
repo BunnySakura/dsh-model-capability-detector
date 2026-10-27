@@ -1,0 +1,10 @@
+# Normalize line endings: the repository stores LF, and Git checks out LF on
+# every platform so the plugin's ESM sources and YAML patches stay comparable.
+* text=auto eol=lf
+
+*.svg text
+*.yml text
+*.json text
+*.md text
+*.mjs text
+*.js text
