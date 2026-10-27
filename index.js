@@ -109,8 +109,9 @@ export function apply(ctx, rawConfig) {
   /**
    * Run `operation` with the HMR transaction scope left behind.
    *
-   * `apply` itself may run inside `hmr.runExclusive` 鈥?the Loader activates a
-   * plugin through it, and `app-boot/config-reload` is published from there too 鈥?   * so every timer and promise this plugin creates inherits the transaction
+   * `apply` itself may run inside `hmr.runExclusive` — the Loader activates a
+   * plugin through it, and `app-boot/config-reload` is published from there too —
+   * so every timer and promise this plugin creates inherits the transaction
    * marker. The write reaches `configEditor.edit`, which calls `runExclusive`
    * again and rejects the nested transaction. `AsyncLocalStorage.exit` is the one
    * documented way out: it runs the callback with no store, and the promise it
@@ -142,7 +143,7 @@ export function apply(ctx, rawConfig) {
    * Only the profile's own layer qualifies: `settings.update` merges into that
    * layer, so filling a route an installed bundle declares would freeze a copy
    * of it and hide later bundle updates. A profile that inherits every route is
-   * left alone 鈥?importing a provider on the Models page writes the user layer.
+   * left alone — importing a provider on the Models page writes the user layer.
    * @returns the providers to inspect, or `undefined` when the layer has none.
    */
   const readProfile = () => {

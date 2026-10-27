@@ -3,12 +3,12 @@
 Detects and fills in a model's capabilities when you import a provider, instead of
 leaving you to type each field by hand.
 
-> 涓枃鏂囨。锛堜富瑕佺増鏈級锛歔README.md](README.md)
+> 中文文档（主要版本）：[README.md](README.md)
 
 ## What this solves
 
 The DSH Models page does request a provider's model list, but it only adopts
-`id`, `name`, `contextWindow`, `maxTokens`, and input modalities 鈥?and only when
+`id`, `name`, `contextWindow`, `maxTokens`, and input modalities — and only when
 you press "fetch models". Metadata that does not use exactly those field names is
 dropped, and reasoning levels are never fetched at all.
 
@@ -38,23 +38,23 @@ runs at a time.
 Listings disagree on field names, nesting, and even on whether a capability is a
 boolean, a list, or a string. Detection covers the common spellings:
 
-- **Context** 鈥?`contextWindow`, `context_window`, `context_length`,
+- **Context** — `contextWindow`, `context_window`, `context_length`,
   `max_context_length`, `max_model_len`, `max_input_tokens`, `limit.context`,
   `top_provider.context_length`.
-- **Output cap** 鈥?`maxOutputTokens`, `max_output_tokens`, `max_tokens`,
+- **Output cap** — `maxOutputTokens`, `max_output_tokens`, `max_tokens`,
   `max_completion_tokens`, `limit.output`, `top_provider.max_completion_tokens`.
-- **Image input** 鈥?`architecture.input_modalities`, `input_modalities`,
+- **Image input** — `architecture.input_modalities`, `input_modalities`,
   `modalities.input`, `input`, `architecture.modality` (such as
   `text+image->text`), plus the `capabilities.vision`, `supports_vision`, and
   `vision` flags.
-- **Reasoning levels** 鈥?`reasoning.supported_efforts`, `reasoning.efforts`,
+- **Reasoning levels** — `reasoning.supported_efforts`, `reasoning.efforts`,
   `reasoning_efforts`, `thinking_levels`, `supported_thinking_levels`,
   `parameters.reasoning_effort.enum`, with vendor spellings mapped onto pi-ai's
-  vocabulary (`none` 鈫?`off`, `mid` 鈫?`medium`, `extra high` 鈫?`xhigh`,
-  `ultra` 鈫?`max`).
+  vocabulary (`none` → `off`, `mid` → `medium`, `extra high` → `xhigh`,
+  `ultra` → `max`).
 
 Both envelope shapes are read: OpenAI's `{ "data": [...] }` array and the
-`{ "models": { "<id>": {鈥 } }` map some gateways use.
+`{ "models": { "<id>": {…} } }` map some gateways use.
 
 **A capability the endpoint does not disclose is never written.** Guessing costs
 more than silence here: an inflated `contextWindow` silently truncates
@@ -70,7 +70,7 @@ Existing values win by default: only blank fields are filled. Set
 `overwrite: true` to replace values the listing discloses.
 
 The write goes through the settings service, so it lands in the profile's own
-`cordis.patch.yml` and takes effect through the normal Loader path 鈥?no restart.
+`cordis.patch.yml` and takes effect through the normal Loader path — no restart.
 
 ## The HMR transaction constraint
 
@@ -95,7 +95,7 @@ automatically. That route was then removed and the profile restored.
 Edit the row in your profile's `cordis.patch.yml`:
 
 ```yaml
-- id: model-capability-detector
+- id: dsh-model-capability-detector
   name: "dsh-model-capability-detector"
   config:
     settingsNs: llm-pi-ai   # profile entry id of the adapter whose providers to fill
@@ -114,7 +114,7 @@ logged and the profile is left untouched.
 ## Credentials
 
 The listing request uses the route's own `apiKeyEnv` reference, resolved through
-the credentials service at call time 鈥?the same reference the adapter uses, so a
+the credentials service at call time — the same reference the adapter uses, so a
 key rotated on the Models page takes effect without a restart. A route with no
 `apiKeyEnv` is probed without an auth header, which is correct for a local vLLM or
 Ollama endpoint.
@@ -163,10 +163,12 @@ Or with the DSH CLI:
 dsh plugin --profile <profile> add ./dsh-model-capability-detector
 ```
 
+Once published to npm, it can be installed from the registry directly.
+
 ## Known limits
 
 - Only routes declared by the profile's own layer are handled; bundle-declared
   routes are left to their declaring bundle.
 - Fields an endpoint does not disclose are left as they are, never inferred.
 - Host-side only, with no separate UI; results appear in the profile configuration
-  and in the log.
+  and in the Host log.

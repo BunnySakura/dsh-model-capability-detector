@@ -174,7 +174,7 @@ test('configured() distinguishes blanks from real values', () => {
   assert.equal(configured(0), false)
   assert.equal(configured(200000), true)
   assert.equal(configured(['text', 'image']), true)
-  // `false` is the pi-ai spelling of "not a reasoning model" 鈥?a real answer.
+  // `false` is the pi-ai spelling of "not a reasoning model" — a real answer.
   assert.equal(configured(false), true)
 })
 
