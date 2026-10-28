@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { createDiagnostics, redactUrl } from '../lib/diagnostics.js'
+import { createDiagnostics, redactUrl, sanitizeMessage } from '../lib/diagnostics.js'
 
 /** Run `body` with a disposable temp directory. */
 async function withTempDir(body) {
@@ -24,6 +24,34 @@ async function withTempDir(body) {
     await rm(directory, { recursive: true, force: true })
   }
 }
+
+test('sanitizeMessage redacts URL credentials and inline secrets without stringifying objects', () => {
+  const message = 'GET https://user:pass@gateway.example/v1/models?api_key=url-secret#fragment Authorization: Bearer header-secret api_key=assignment-secret'
+  const safe = sanitizeMessage(message)
+  assert.equal(safe.includes('user'), false)
+  assert.equal(safe.includes('url-secret'), false)
+  assert.equal(safe.includes('fragment'), false)
+  assert.equal(safe.includes('header-secret'), false)
+  assert.equal(safe.includes('assignment-secret'), false)
+  assert.ok(safe.includes('gateway.example/v1/models'))
+  assert.equal(sanitizeMessage(17), '17')
+  assert.equal(sanitizeMessage('Bearer bare-secret'), 'Bearer [REDACTED]')
+  assert.equal(sanitizeMessage('password="two word secret"'), 'password=[REDACTED]')
+  assert.equal(sanitizeMessage('apiKey=camel-secret token=token-secret key=key-secret'), 'apiKey=[REDACTED] token=[REDACTED] key=[REDACTED]')
+  assert.equal(sanitizeMessage('https://user:pass@[broken]/models?token=secret#fragment'), 'https://[broken]/models')
+  assert.equal(sanitizeMessage('https://host.example/path#secret'), 'https://host.example/path')
+  const error = new Error('Bearer error-secret https://u:p@host.example/path?key=query-secret', {
+    cause: { message: 'cause-secret' },
+  })
+  error.toString = () => { throw new Error('do not stringify Error') }
+  assert.equal(sanitizeMessage(error), 'Bearer [REDACTED] https://host.example/path')
+  const arbitrary = {
+    message: 'arbitrary-secret',
+    toJSON() { throw new Error('do not serialize arbitrary objects') },
+    toString() { throw new Error('do not stringify arbitrary objects') },
+  }
+  assert.equal(sanitizeMessage(arbitrary), '[Unsupported diagnostic value]')
+})
 
 test('an unset path disables logging entirely', async () => {
   for (const path of [undefined, null, '', 0]) {
@@ -93,14 +121,15 @@ test('a write failure is swallowed rather than breaking the caller', async () =>
 test('an oversized log is rotated instead of growing without bound', async () => {
   await withTempDir(async (directory) => {
     const path = join(directory, 'diag.log')
-    // Cross the 2 MiB rotation threshold with a single large write.
-    await writeFile(path, `${'x'.repeat(2 * 1024 * 1024 + 1)}\n`, 'utf8')
+    // Cross the threshold with non-UTF-8 bytes to verify a byte-for-byte copy.
+    const previous = Buffer.alloc(2 * 1024 * 1024 + 1, 0xff)
+    await writeFile(path, previous)
     const diagnostics = createDiagnostics(path)
     diagnostics.write('after-rotation', { ok: true })
     await diagnostics.flush()
 
-    const rotated = await readFile(`${path}.1`, 'utf8')
-    assert.ok(rotated.length > 2 * 1024 * 1024, 'the previous content is retained once')
+    const rotated = await readFile(`${path}.1`)
+    assert.deepEqual(rotated, previous, 'the previous bytes are retained once')
     const current = await readFile(path, 'utf8')
     const entry = JSON.parse(current.trim())
     assert.equal(entry.event, 'after-rotation')
@@ -117,6 +146,45 @@ test('redactUrl keeps the endpoint but drops any query string', () => {
   assert.equal(redactUrl(undefined), undefined)
   // A userinfo segment must not survive either.
   assert.equal(redactUrl('https://user:pass@host.example/v1/models'), 'https://host.example/v1/models')
+})
+
+test('write recursively sanitizes details and never serializes Error causes', async () => {
+  await withTempDir(async (directory) => {
+    const path = join(directory, 'diag.log')
+    const diagnostics = createDiagnostics(path)
+    const cause = { apiKey: 'cause-secret', toJSON() { throw new Error('must not serialize cause') } }
+    const error = new Error('failed https://u:p@gateway.example/path?token=url-secret')
+    error.cause = cause
+    diagnostics.write('route-probed', {
+      model: 'model-name-is-retained',
+      message: 'Authorization: Bearer message-secret api_key=inline-secret',
+      url: 'https://gateway.example/models?key=query-secret#fragment',
+      nested: [{ apiKey: 'field-secret', note: 'password=string-secret' }],
+      headers: { authorization: 'header-secret', 'x-api-key': 'header-key-secret' },
+      requestHeaders: { 'x-custom': 'custom-header-secret' },
+      credentials: { username: 'credential-user', password: 'credential-password' },
+      modelNote: 'model-name token=model-secret',
+      error,
+    })
+    let getterCalled = false
+    const detail = { nested: { toJSON() { throw new Error('must not invoke toJSON') } } }
+    Object.defineProperty(detail, 'getter', { enumerable: true, get() { getterCalled = true; return 'getter-secret' } })
+    detail.self = detail
+    diagnostics.write('Bearer event-secret', detail)
+    await diagnostics.flush()
+
+    const text = await readFile(path, 'utf8')
+    for (const secret of ['url-secret', 'message-secret', 'inline-secret', 'query-secret', 'field-secret', 'string-secret', 'header-secret', 'header-key-secret', 'custom-header-secret', 'credential-user', 'credential-password', 'model-secret', 'event-secret', 'getter-secret', 'cause-secret']) {
+      assert.equal(text.includes(secret), false, `${secret} must not reach the log`)
+    }
+    assert.equal(getterCalled, false)
+    assert.equal(text.trim().split('\n').length, 2)
+    assert.ok(text.includes('[Circular]'))
+    assert.ok(text.includes('model-name-is-retained'))
+    assert.ok(text.includes('gateway.example/path'))
+    assert.ok(text.includes('gateway.example/models'))
+    assert.equal(text.includes('must not serialize cause'), false)
+  })
 })
 
 test('the log never contains a credential-shaped value from a record', async () => {

@@ -11,5 +11,8 @@
         dryRun: false
         timeoutMs: 15000
         catalogFallback: true
-        catalogNumbers: false
+        catalogNumbers: true
+        catalogNumericStrategy: minimum
+        discoveryTrigger: true
+        logging: false
         logFile: ""

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Model Capability Detector",
-    "description": "Reads a provider's model listing after you import it, fills in context window, image input, and reasoning levels, and falls back to a public catalog when the endpoint discloses nothing."
+    "description": "Collects context, output limits, image support and reasoning levels when fetching or saving third-party providers. API metadata comes first; public catalogs fill missing fields conservatively."
   }
 }

@@ -1,217 +1,124 @@
 # dsh-model-capability-detector
 
-导入提供商时自动探测并填写模型能力，省去逐项手填。
+在 DSH 中获取或保存第三方 API 渠道时，自动采集模型上下文长度、输出上限、识图能力和推理等级。API 明确披露的字段优先，缺失字段可由 [models.dev](https://models.dev) 兜底。
 
 > English: [README.en.md](README.en.md)
 
-## 这个插件解决什么
+## 触发与写入
 
-DSH 的「模型」设置页本身会请求提供商的模型列表，但它只在点击「获取模型」时采纳
-`id`、`name`、`contextWindow`、`maxTokens` 和输入模态这几项，字段名不完全一致的
-元数据会被丢弃，思考等级则完全不会获取。
+- 点击「获取可用模型」时：第三方渠道立即请求模型列表，解析能力并补充公开目录数据，将上下文、输出上限和输入模态交给模型编辑草稿。**获取列表本身不会保存配置**。
+- 保存或编辑渠道后：监听 `settings/document-updated`，将缺失能力写入 profile；推理等级也在此时补入。
+- profile 重载后，以及启动数秒后：执行一次兜底扫描。
 
-本插件读取同一份模型列表，把其中**明确披露**的能力写回你的 profile：
+默认只补空字段，保留手工填写的值；`overwrite: true` 可覆盖已有值。仅改动 profile 自己层声明的路由，bundle 继承的路由不回写。保存经 `settings.update` 完成，带版本检查，并通过现有 HMR 流程生效。
 
-| 字段 | 含义 |
+模型获取接入仅作用于 `settingsNs` 指定命名空间、带明确 `baseURL` 的自定义渠道；内置目录渠道继续使用原适配器。DSH 当前没有模型发现完成事件，也不允许重复注册同一命名空间的 discovery，因此插件对公共 `llm.discoverModels` 方法做可卸载包装，不访问私有发现注册表，不改 HTTP/RPC 传输。`discoveryTrigger: false` 可单独关闭这一接入；将来 DSH 若改变该方法或草稿接口，需要重新验证兼容性。
+
+DSH 的发现结果结构不传递推理等级。插件在内存中缓存原始能力元数据，最多 8 份、5 分钟，保存时复用；缓存按端点、协议、凭据和自定义头的 SHA-256 指纹隔离，**不保存原始密钥或响应体**。过期、端点或凭据变化后重新探测。未保存的草稿不会被后台写入。
+
+## 数据优先级与上下文冲突
+
+| 来源 | 行为 |
 |---|---|
-| `contextWindow` | 模型可接受的上下文长度 |
-| `maxTokens` | 模型声明的输出上限 |
-| `input` | `["text"]` 或 `["text", "image"]` |
-| `reasoningEfforts` | 模型提供的思考等级；不支持思考时为 `false` |
+| 已有配置 | 默认保留；`overwrite: true` 才会替换 |
+| 当前渠道 API | 对披露字段优先于公开目录 |
+| 公开目录数值 | 默认取同一已解析模型身份的最小有效正安全整数 |
+| 公开目录输入模态 | 已披露的条目必须一致，否则不填 |
+| 公开目录推理等级 | 取已披露等级的交集；明确支持/不支持推理的冲突不填 |
+| 无数据或身份歧义 | 保持空白，等待手工填写 |
 
-## 触发时机
+例如目录记录 `128000`、`131072`、`200000`，默认填写 **128000**，不按 K/M 四舍五入。token 数本来就应该是整数；把候选值取整不能解决不同渠道的容量差异，数值越大也不代表信息越准确。非整数、0、负数及超出 JavaScript 安全整数范围的值会被忽略。
 
-- 在「模型」页保存或编辑提供商配置后（`settings/document-updated`）。
-- profile 的补丁重新协调完成后（`app-boot/config-reload`）。
-- 启动数秒后执行一次兜底扫描，覆盖「插件当时未启用」或「端点当时不可达」的配置。
+最小值是一种保守估计，**不能保证未公开的转售渠道也支持这个容量**，也可能导致提前压缩上下文。更精确的渠道 API 数据或你手工设置的容量应优先。插件不会发送推理请求来探测真实上限，不会消耗聊天 token。
 
-多次配置写入会被合并成一次探测，且同一时刻只有一个探测在跑。
-
-## 判定规则
-
-各家模型列表对同一能力的表述方式并不统一：字段名不同、嵌套层级不同，甚至同一项能力
-可能是布尔值、数组或字符串。探测覆盖以下常见写法：
-
-- **上下文** — `contextWindow`、`context_window`、`context_length`、
-  `max_context_length`、`max_model_len`、`max_input_tokens`、`limit.context`、
-  `top_provider.context_length`。
-- **输出上限** — `maxOutputTokens`、`max_output_tokens`、`max_tokens`、
-  `max_completion_tokens`、`limit.output`、`top_provider.max_completion_tokens`。
-- **识图能力** — `architecture.input_modalities`、`input_modalities`、
-  `modalities.input`、`input`、`architecture.modality`（如 `text+image->text`），
-  以及 `capabilities.vision`、`supports_vision`、`vision` 等布尔标志。
-- **思考等级** — `reasoning.supported_efforts`、`reasoning.efforts`、
-  `reasoning_efforts`、`thinking_levels`、`supported_thinking_levels`、
-  `parameters.reasoning_effort.enum`，并把厂商写法映射到 pi-ai 的词汇表
-  （`none` → `off`、`mid` → `medium`、`extra high` → `xhigh`、`ultra` → `max`）。
-
-两种列表封装格式都会读取：OpenAI 的 `{ "data": [...] }` 数组，以及部分网关使用的
-`{ "models": { "<id>": {…} } }` 映射。
-
-**端点没有披露的能力一律不写。** 这里猜测的代价高于留空：`contextWindow` 猜大会导致
-对话被静默截断，`input` 猜错会让本该支持的图片无法发送。
-
-## 写入范围与策略
-
-只处理**你自己 profile 层声明**的路由。由已安装 bundle 声明的路由不会被改动，否则会把
-该路由冻结成一份副本，遮蔽 bundle 后续的更新。
-
-默认策略是「已有值优先」，只补空字段；设置 `overwrite: true` 才会覆盖列表披露的值。
-
-写入经由 settings 服务，因此落在 profile 自己的 `cordis.patch.yml`，走正常 Loader 流程
-生效，无需重启。
-
-## 公开目录兜底
-
-很多转售网关的 `/models` 只返回 `{"id":"...","object":"model"}`，没有任何能力字段。
-此时插件会查询公开目录 [models.dev](https://models.dev)（约 5.8 MB，缓存在
-`$DSH_HOME/cache/model-capability-detector/catalog.json`，有效期 7 天）。
-
-**但兜底按字段分级，不是全盘采信。** 因为同一个模型名在不同渠道下含义不同——转售商常见
-截断上下文。实测同名条目的跨渠道一致率：
-
-| 字段 | 一致率 | 默认 |
-|---|---|---|
-| 识图能力 | 87.1% | 启用 |
-| 思考挡位 | 79.4% | 启用 |
-| 上下文长度 | 52.1% | **关闭**，需 `catalogNumbers: true` |
-| 输出上限 | 47.3% | **关闭**，需 `catalogNumbers: true` |
-
-理由：上下文猜大会静默截断对话，是最糟的失败模式；识图或挡位出错会立刻暴露（发不了图、
-API 拒绝请求），不会静默出错。
-
-进一步地，即使字段已启用，也只有当**该名称下的所有目录条目取值一致**时才会写入。存在冲突
-时保留候选值并记入日志，交由你判断。
-
-### 名称归一化
-
-第三方渠道的命名差异由两级归一化处理：先剥掉首个 `/` 之前的 provider 段，再转小写并删除
-所有非字母数字字符。因此 `GPT-6.1-SOL`、`gpt_6_1_sol`、`Gpt-6.1-Sol`、
-`openai/gpt-6.1-sol` 都会落到同一身份。
-
-两种情形会明确拒绝而非猜测：
-
-- **无法匹配**：`gpt-9-ultra`、带日期后缀的 `gpt-6.1-sol-2026-01-01` 返回 unknown，
-  留给你手填。
-- **身份歧义**：若同一名称能指向两个不同的目录身份（例如带日期与不带日期是不同条目），
-  返回 ambiguous，绝不取第一个。
-
-## 诊断日志
-
-DSH 的 logger 只保留 1000 条内存环形缓冲，本部署没有注册任何落盘 sink，所以插件失败时
-**磁盘上没有任何记录**——"决定不写"和"从未运行"无法区分。这是排查困难的根因。
-
-设置 `logFile` 可开启一个可选的 JSONL 诊断日志：
+可选择更严格的策略：
 
 ```yaml
-    logFile: "~/.dsh/logs/model-capability-detector.log"
+catalogNumericStrategy: consensus  # 数值只有完全一致才填
+# 或：
+catalogNumbers: false              # 关闭上下文与输出上限的目录兜底
 ```
 
-记录每次探测的路由、披露字段数、目录命中与冲突、写入计划与结果。**不记录任何凭据**：
-URL 会剥离 query string，密钥与响应体永不写入。单文件超过 2 MiB 时轮转一次保留历史。
+`catalogFallback: false` 则完全关闭公开目录。API 只披露部分字段时，目录只补其余字段；API 已披露全部待填字段时不下载目录。API 不可达时仍可用目录补齐缺失字段，但后续设置变化仍允许重试 API。
 
-留空即关闭（默认），不产生任何磁盘写入。
+目录缓存位于 `$DSH_HOME/cache/model-capability-detector/catalog.json`，默认 7 天有效；切换源 URL 会使旧源缓存失效，缓存仅保存源 URL 的 SHA-256 指纹。刷新失败可以使用同源同版本的过期缓存。缓存格式升级后旧缓存会重新获取。
 
-## 关于 HMR 事务的限制
+### 名称匹配
 
-`settings.update` 最终会调用 `configEditor.edit`，后者把工作包在 `hmr.runExclusive` 里，
-遇到嵌套事务会抛 `HMR transactions cannot be nested`。而 Loader 激活插件本身就在这个
-独占作用域内执行，`app-boot/config-reload` 也从内部发布，所以由此启动的探测会通过
-定时器和 Promise 继承该事务标记。
+先去掉最后一个 `/` 之前的前缀，再转小写并保留字母数字。因此 `GPT-6.1-SOL`、`gpt_6_1_sol`、`openai/gpt-6.1-sol` 可命中同一身份。日期、版本等尾缀不会被主动删除。同名可达多个不同目录身份时拒绝填写，不任取一条。
 
-因此写在 `AsyncLocalStorage.exit` 下执行——这是离开该作用域唯一有文档保证的方式。换成
-新建 `AsyncResource` 无效：它捕获的是构造时的 store，而 `apply` 执行时已经在事务内。
+## API 解析
 
-这一点经过端到端验证，而不只是单元测试：安装后向 profile 加入一条指向公开列表的临时
-路由，该路由的 `contextWindow`、`maxTokens`、`input`、`reasoningEfforts` 全部被自动
-填入，随后移除该路由并还原 profile。
+| 配置字段 | 常见 API 字段 |
+|---|---|
+| `contextWindow` | `contextWindow`、`context_window`、`context_length`、`max_model_len`、`max_input_tokens`、`limit.context`、`top_provider.context_length` |
+| `maxTokens` | `max_output_tokens`、`max_tokens`、`max_completion_tokens`、`limit.output`、`top_provider.max_completion_tokens` |
+| `input` | `architecture.input_modalities`、`modalities.input`、`input`、`supports_vision`、`vision` 等 |
+| `reasoningEfforts` | `reasoning.supported_efforts`、`reasoning_efforts`、`thinking_levels`、`parameters.reasoning_effort.enum` 等 |
 
-## 配置项
+支持 `{data:[...]}`、`{models:{id:{...}}}`、`{models:[...]}` 和顶层数组。模型映射的 key 是实际请求 ID，优先于条目内的 canonical id。等级会归一化到 pi-ai 词汇，例如 `none → off`、`mid → medium`、`extra high → xhigh`；仅声明支持推理而未披露等级时不会凭空生成等级。
 
-编辑 profile 的 `cordis.patch.yml` 中对应行：
+OpenAI 兼容协议请求 `GET {baseURL}/models`；Anthropic 请求 `GET /v1/models?limit=1000`，接受根地址或带 `/v1` 的地址。自定义请求头会发送到渠道端点，API key 经 credentials 服务即时解析；显式设置但无法解析的引用不会退化成匿名请求。草稿只有在端点和协议与已保存渠道一致时才复用其凭据及请求头；换地址后需提供新凭据，显式输入的新密钥优先。API 请求拒绝重定向，避免自定义认证头被转发。响应在读取时按字节限制大小，超限即取消。
+
+## 日志与隐私
+
+**默认关闭全部插件日志**：`logging: false` 且 `logFile: ""` 时既不输出 Host 日志，也不创建诊断日志。公开目录缓存仍可能写入磁盘，与日志开关无关。
+
+调试时可以任选：
+
+```yaml
+logging: true                         # 仅启用 DSH Host 日志
+logFile: "logs/model-capability-detector.log"  # 显式路径启用 JSONL 文件及 Host 日志
+```
+
+文件路径为空则关闭文件日志；如需恢复完全静默，同时将 `logging` 设为 `false`。相对路径基于 DSH home；`~/` 也表示 DSH home，例如 `~/logs/detector.log`，不要重复加 `.dsh`。
+
+诊断记录事件、模型字段和决策，不记录密钥、请求头原始值或响应体；URL 的 userinfo、查询参数、fragment 以及常见凭据模式会被脱敏，错误对象不原样输出。日志超过 2 MiB 时保留一份 `.1` 历史。路由名、模型 ID 等仍可能属于你的部署信息，分享前应检查日志。默认忽略日志、环境文件和本地缓存，避免误提交到 GitHub。
+
+## 配置
+
+在 profile 的 `cordis.patch.yml` 中按行 id 覆盖配置：
 
 ```yaml
 - id: dsh-model-capability-detector
-  name: "dsh-model-capability-detector"
+  name: dsh-model-capability-detector
   config:
-    settingsNs: llm-pi-ai     # 要填充的适配器 profile 条目 id
-    enabled: true             # false 完全关闭自动探测
-    overwrite: false          # true 覆盖你已设置的值
-    dryRun: false             # true 只记录计划，不写 profile
-    timeoutMs: 15000          # 单端点探测超时
-    debounceMs: 800           # 配置变更后的静默期
-    startupDelayMs: 3000      # 启动兜底扫描的延迟
+    settingsNs: llm-pi-ai
+    enabled: true
+    overwrite: false
+    dryRun: false
+    timeoutMs: 15000
+    debounceMs: 800
+    startupDelayMs: 3000
     maxResponseBytes: 4194304
-    catalogFallback: true     # false 完全不查询公开目录
-    catalogUrl: "https://models.dev/api.json"
-    catalogTimeoutMs: 30000   # 目录下载超时
-    catalogMaxBytes: 16777216 # 目录体积上限
-    catalogTtlMs: 604800000   # 缓存有效期，默认 7 天
-    catalogNumbers: false     # true 时也采信上下文长度与输出上限
-    logFile: ""               # 诊断日志路径，留空关闭
+    catalogFallback: true
+    catalogUrl: https://models.dev/api.json
+    catalogTimeoutMs: 30000
+    catalogMaxBytes: 16777216
+    catalogTtlMs: 604800000
+    catalogNumbers: true
+    catalogNumericStrategy: minimum
+    discoveryTrigger: true
+    logging: false
+    logFile: ""
 ```
 
-接入新网关时建议先设 `dryRun: true`：只会在日志里列出将要写入的内容，不改动 profile。
+`dryRun: true` 仅计算计划，不写 profile；搭配 `logging: true` 或 `logFile` 查看计划。此选项仍允许把发现候选交给编辑草稿。
 
-## 凭据使用
+从 1.1 升级时，已有 profile 显式设置的 `catalogNumbers: false` 或 `logFile` 会继续生效。想采用新的数值默认策略，需要修改自己的覆盖项；已填写的旧数值默认不会被覆盖。
 
-探测请求使用路由自身的 `apiKeyEnv` 引用，经 credentials 服务在调用时解析——与适配器用
-的是同一个引用，因此在「模型」页轮换密钥后无需重启即可生效。未配置 `apiKeyEnv` 的路由
-以无鉴权方式探测，这对本地 vLLM、Ollama 是正确的。
+## 稳定性与验证
 
-路由上配置的自定义 `headers` 也会一并发送，因此需要额外请求头的网关同样能被探测。
+配置变化会合并处理，后台 pass 串行运行。写入前重新核对配置版本，避免慢请求覆盖用户刚做的编辑；卸载会取消请求、清理定时器和内存缓存，已开始的探测也不会继续写配置。配置写入保留已有的 HMR 事务隔离方式。
 
-## 失败行为
-
-端点不可达、密钥被拒、列表无法解析时，只记录一条包含路由名与原因的警告，不做任何改动，
-也不会阻塞导入：本插件运行时配置已经保存完毕。
-
-若两次写入竞争，过期版本的写入会被拒绝，随后的文档事件会基于新值再触发一次探测。
-
-## 目录结构
-
-```
-index.js              Host 插件：配置监听、端点探测、兜底查询、回写
-lib/detect.js         纯函数：列表解析、等级归一化、URL 与请求头构造
-lib/plan.js           纯函数：把探测结果合并进已配置的模型行，含字段分级
-lib/catalog.js        纯函数：公开目录索引、名称归一化、一致性判定、缓存
-lib/diagnostics.js    可选的 JSONL 诊断日志，含脱敏与轮转
-test/detect.test.mjs       列表解析与合并的单元测试
-test/catalog.test.mjs      目录兜底与名称归一化的单元测试
-test/diagnostics.test.mjs  日志脱敏、并发与轮转的测试
-test/fallback.test.mjs     兜底在真实 pass 中的集成测试
-test/plugin.test.mjs       apply() 的行为测试（含 HMR 事务场景）
-test/live-probe.mjs        对公开列表的只读探测脚本
-cordis.patch.yml           本包插入的 bundle 行
+```sh
+node --test test/*.test.mjs
 ```
 
-## 运行测试
-
-```bash
-node --test test/detect.test.mjs test/catalog.test.mjs test/diagnostics.test.mjs test/fallback.test.mjs test/plugin.test.mjs
-```
+测试使用合成数据和假 fetch，不读取真实渠道或密钥。覆盖列表解析、目录冲突与缓存隔离、日志脱敏、获取列表后保存、卸载取消、并发编辑及 HMR 场景。该版本的实际模型页点击行为仍应在目标 DSH 版本中验证，离线测试不等同于浏览器验收。
 
 ## 安装
 
-以本地目录方式安装到当前 profile：
+通过 DSH 的插件管理器安装本地目录或已发布包；Agent 使用 `plugin_manager` 的 `install_bundle` 操作，目标为插件目录绝对路径。安装会影响当前 profile 的所有会话，请在希望启用该版本时执行。
 
-```
-plugin_manager install_bundle target=<本目录绝对路径>
-```
-
-或使用 DSH CLI：
-
-```bash
-dsh plugin --profile <profile> add ./dsh-model-capability-detector
-```
-
-发布到 npm 后，也可以直接从注册表安装。
-
-## 已知边界
-
-- 只处理 profile 自己层声明的路由；bundle 声明的路由留给声明方维护。
-- 端点未披露的字段保持原样，不进行推断。
-- 目录兜底按字段分级：数值字段默认关闭，需要 `catalogNumbers: true` 显式开启。
-- 名称无法匹配或身份存在歧义时一律不写，交由你手填。
-- 纯 Host 侧实现，无独立 UI；结果通过 profile 配置与诊断日志体现。
-
+主要实现位于 `index.js`、`lib/catalog.js`、`lib/detect.js`、`lib/discovery.js`、`lib/http.js` 和 `lib/diagnostics.js`。本插件无独立 UI，不修改 DSH 安装文件，也没有安装脚本或运行时下载依赖。

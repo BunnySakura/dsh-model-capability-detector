@@ -20,9 +20,21 @@ import {
   listingUrl,
   normalizeLevel,
   normalizeLevels,
+  positiveInteger,
   readListing,
 } from '../lib/detect.js'
 import { describeChanges, mergeDetected, sameProviders } from '../lib/plan.js'
+
+test('positiveInteger rejects unsafe integers and accepts the next valid candidate', () => {
+  assert.equal(positiveInteger('999999999999999999999999999999999999', '42'), 42)
+  assert.equal(positiveInteger(Number.MAX_SAFE_INTEGER + 1, '7'), 7)
+  assert.equal(positiveInteger('9007199254740992'), undefined)
+  assert.equal(positiveInteger('9'.repeat(1000)), undefined)
+  assert.equal(positiveInteger(Infinity, 'Infinity', -1, 0, '0', '1e6', '1.5'), undefined)
+  assert.equal(positiveInteger(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER)
+  assert.equal(positiveInteger(String(Number.MAX_SAFE_INTEGER)), Number.MAX_SAFE_INTEGER)
+  assert.equal(positiveInteger(' 123 '), 123)
+})
 
 test('listing URLs follow each protocol', () => {
   assert.deepEqual(listingUrl('https://api.example/v1', 'openai-completions'), {
@@ -41,6 +53,17 @@ test('listing URLs follow each protocol', () => {
     url: 'https://gw.example/anthropic/v1/models?limit=1000',
     family: 'anthropic',
   })
+  assert.deepEqual(listingUrl('https://gw.example/v1?tenant=one&token=secret#fragment', 'openai-completions'), {
+    url: 'https://gw.example/v1/models?tenant=one&token=secret',
+    family: 'openai',
+  })
+  assert.deepEqual(listingUrl('https://gw.example/v1?tenant=one', 'anthropic-messages'), {
+    url: 'https://gw.example/v1/models?tenant=one&limit=1000',
+    family: 'anthropic',
+  })
+  assert.equal(listingUrl('https://gw.example/?tenant=one', 'openai-responses').url, 'https://gw.example/models?tenant=one')
+  assert.equal(listingUrl('https://gw.example/?tenant=one&limit=5#fragment', 'anthropic-messages').url, 'https://gw.example/v1/models?tenant=one&limit=1000')
+  assert.equal(listingUrl('https://gw.example/anthropic/v1/?tenant=one', 'anthropic-messages').url, 'https://gw.example/anthropic/v1/models?tenant=one&limit=1000')
 })
 
 test('headers carry the credential the protocol expects', () => {
@@ -57,6 +80,12 @@ test('headers carry the credential the protocol expects', () => {
   const custom = listingHeaders('openai', 'sk-test', { authorization: 'Bearer explicit' })
   assert.equal(custom.get('authorization'), 'Bearer explicit')
   assert.equal(listingHeaders('openai', undefined).get('authorization'), null)
+  const customKey = listingHeaders('openai', 'sk-test', { 'x-api-key': 'explicit-key', 'x-route': 'route-name' })
+  assert.equal(customKey.get('x-api-key'), 'explicit-key')
+  assert.equal(customKey.get('authorization'), null)
+  assert.equal(customKey.get('x-route'), 'route-name')
+  const customVersion = listingHeaders('anthropic', 'sk-ant', { 'anthropic-version': 'custom-version' })
+  assert.equal(customVersion.get('anthropic-version'), 'custom-version')
 })
 
 test('level names normalize across vendor spellings', () => {
@@ -156,8 +185,19 @@ test('listings are read from both published envelope shapes', () => {
   assert.deepEqual(fromData.map((entry) => entry.id), ['a', 'b'])
   assert.equal(fromData[0].contextWindow, 1000)
 
+  const fromArray = readListing({ models: [{ id: 'array-a' }, { model: 'array-b' }] })
+  assert.deepEqual(fromArray.map((entry) => entry.id), ['array-a', 'array-b'])
+
   const fromMap = readListing({ models: { alias: { id: 'real-id' }, second: { context_window: 2000 } } })
-  assert.deepEqual(fromMap, [{ id: 'real-id' }, { id: 'second', contextWindow: 2000 }])
+  assert.deepEqual(fromMap, [{ id: 'alias' }, { id: 'second', contextWindow: 2000 }])
+  assert.deepEqual(capabilitiesOf({ id: 'canonical-id', name: 'Model' }, 'request-alias'), {
+    id: 'request-alias',
+    name: 'Model',
+  })
+  assert.deepEqual(readListing({ models: { first: { id: 'canonical' }, second: { id: 'canonical' } } }), [
+    { id: 'first' }, { id: 'second' },
+  ])
+  assert.deepEqual(readListing([{ id: 'direct' }]), [{ id: 'direct' }])
 
   // Dedupe keeps endpoint order.
   assert.deepEqual(readListing({ data: [{ id: 'a' }, { id: 'a' }] }).map((e) => e.id), ['a'])

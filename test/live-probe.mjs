@@ -1,36 +1,37 @@
-/**
- * End-to-end probe against a live, public listing: fetch OpenRouter's model
- * catalog and run every advertised entry through the detection helpers.
- *
+/** Read-only probe of a public OpenAI-compatible listing; no credentials read.
  * Run: node test/live-probe.mjs [baseURL]
- * Defaults to OpenRouter, whose listing carries the richest metadata of the
- * shapes this plugin reads. The network call is the only side effect.
  */
-
 import { listingUrl, readListing } from '../lib/detect.js'
+import { redactUrl, sanitizeMessage } from '../lib/diagnostics.js'
+import { readJsonResponse } from '../lib/http.js'
 
-const baseURL = process.argv[2] ?? 'https://openrouter.ai/api/v1'
-const target = listingUrl(baseURL, 'openai-completions')
-
-const response = await fetch(target.url, { headers: { accept: 'application/json' } })
-if (!response.ok) {
-  console.error(`${target.url} answered ${response.status}`)
-  process.exit(1)
+try {
+  const baseURL = process.argv[2] ?? 'https://openrouter.ai/api/v1'
+  const target = listingUrl(baseURL, 'openai-completions')
+  const response = await fetch(target.url, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+    redirect: 'error',
+  })
+  if (!response.ok) {
+    await response.body?.cancel()
+    throw new Error(`listing answered ${response.status}`)
+  }
+  const models = readListing(await readJsonResponse(response, 4 * 1024 * 1024))
+  const withContext = models.filter((model) => model.contextWindow !== undefined)
+  const withImage = models.filter((model) => model.input?.includes('image'))
+  const withEfforts = models.filter((model) => model.reasoningEfforts !== undefined)
+  const nonReasoning = models.filter((model) => model.reasoningEfforts === false)
+  console.log(`endpoint      ${redactUrl(target.url)}`)
+  console.log(`entries       ${models.length}`)
+  console.log(`contextWindow ${withContext.length}`)
+  console.log(`image input   ${withImage.length}`)
+  console.log(`efforts dict  ${withEfforts.length}`)
+  console.log(`no reasoning  ${nonReasoning.length}`)
+  for (const model of [...models.slice(0, 3), ...withEfforts.slice(0, 3)]) {
+    console.log(sanitizeMessage(JSON.stringify(model)))
+  }
+} catch (error) {
+  console.error(sanitizeMessage(error))
+  process.exitCode = 1
 }
-const body = await response.json()
-const models = readListing(body)
-
-const withContext = models.filter((model) => model.contextWindow !== undefined)
-const withImage = models.filter((model) => model.input?.includes('image'))
-const withEfforts = models.filter((model) => model.reasoningEfforts !== undefined)
-const nonReasoning = models.filter((model) => model.reasoningEfforts === false)
-
-console.log(`endpoint      ${target.url}`)
-console.log(`entries       ${models.length}`)
-console.log(`contextWindow ${withContext.length}`)
-console.log(`image input   ${withImage.length}`)
-console.log(`efforts dict  ${withEfforts.length}`)
-console.log(`no reasoning  ${nonReasoning.length}`)
-console.log('')
-for (const model of models.slice(0, 3)) console.log(JSON.stringify(model))
-for (const model of withEfforts.slice(0, 3)) console.log(JSON.stringify(model))

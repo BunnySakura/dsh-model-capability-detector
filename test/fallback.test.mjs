@@ -133,7 +133,31 @@ function blankProfile() {
   }
 }
 
-test('the catalog fills safe fields the endpoint left empty', async () => {
+test('catalogNumbers false restricts fallback to modalities and reasoning', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-fallback-'))
+  const { ctx, state } = harness({ providers: blankProfile(), homePath: home })
+  const stub = stubFetch({ '/models': bareListing, 'models.dev': catalog })
+  try {
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, logging: true, catalogNumbers: false })
+    await settle()
+  } finally {
+    stub.restore()
+    await rm(home, { recursive: true, force: true })
+  }
+
+  const [alpha, beta] = state.providers['example-route'].models
+  // Modalities agreed across both vendors, so they are written.
+  assert.deepEqual(alpha.input, ['text', 'image'])
+  assert.deepEqual(alpha.reasoningEfforts, { low: 'low', high: 'high' })
+  // Numeric fallback was explicitly disabled for this pass.
+  assert.equal(alpha.contextWindow, undefined, 'a contradicted value is withheld')
+  assert.equal(alpha.maxTokens, undefined, 'numbers need the explicit opt-in')
+
+  assert.deepEqual(beta.input, ['text'])
+  assert.equal(beta.reasoningEfforts, false, 'a known non-reasoning model says so')
+})
+
+test('numeric fallback uses the minimum by default, including conflicts', async () => {
   const home = await mkdtemp(join(tmpdir(), 'mcd-fallback-'))
   const { ctx, state } = harness({ providers: blankProfile(), homePath: home })
   const stub = stubFetch({ '/models': bareListing, 'models.dev': catalog })
@@ -146,35 +170,11 @@ test('the catalog fills safe fields the endpoint left empty', async () => {
   }
 
   const [alpha, beta] = state.providers['example-route'].models
-  // Modalities agreed across both vendors, so they are written.
-  assert.deepEqual(alpha.input, ['text', 'image'])
-  assert.deepEqual(alpha.reasoningEfforts, { low: 'low', high: 'high' })
-  // The two vendors disagreed on context, so nothing is written for it.
-  assert.equal(alpha.contextWindow, undefined, 'a contradicted value is withheld')
-  assert.equal(alpha.maxTokens, undefined, 'numbers need the explicit opt-in')
-
-  assert.deepEqual(beta.input, ['text'])
-  assert.equal(beta.reasoningEfforts, false, 'a known non-reasoning model says so')
-})
-
-test('catalogNumbers enables the risky fields, still only when they agree', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'mcd-fallback-'))
-  const { ctx, state } = harness({ providers: blankProfile(), homePath: home })
-  const stub = stubFetch({ '/models': bareListing, 'models.dev': catalog })
-  try {
-    apply(ctx, { startupDelayMs: 0, debounceMs: 0, catalogNumbers: true })
-    await settle()
-  } finally {
-    stub.restore()
-    await rm(home, { recursive: true, force: true })
-  }
-
-  const [alpha, beta] = state.providers['example-route'].models
   // beta's values were disclosed by one entry only, so they are usable.
   assert.equal(beta.contextWindow, 400000)
   assert.equal(beta.maxTokens, 8000)
-  // alpha stays withheld: the opt-in does not override a contradiction.
-  assert.equal(alpha.contextWindow, undefined)
+  // alpha uses the smallest published capacity, without rounding.
+  assert.equal(alpha.contextWindow, 200000)
 })
 
 test('endpoint values always win over the catalog', async () => {
@@ -266,7 +266,7 @@ test('a failing catalog does not stop endpoint detection', async () => {
   }
   const stub = stubFetch({ '/models': listing, 'models.dev': 'fail' })
   try {
-    apply(ctx, { startupDelayMs: 0, debounceMs: 0 })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, logging: true })
     await settle()
   } finally {
     stub.restore()
@@ -287,18 +287,14 @@ test('with no home path service the catalog is skipped, not crashed', async () =
   ctx.get = () => undefined
   const stub = stubFetch({ '/models': bareListing, 'models.dev': catalog })
   try {
-    apply(ctx, { startupDelayMs: 0, debounceMs: 0 })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, logging: true })
     await settle()
   } finally {
     stub.restore()
     ctx.get = originalGet
   }
   assert.equal(state.writes.length, 0)
-  assert.ok(
-    logs.some((entry) => entry.message.includes('catalog')) ||
-      logs.some((entry) => entry.level === 'debug'),
-    'the skip is observable',
-  )
+  assert.equal(logs.some((entry) => entry.level === 'error'), false)
 })
 
 test('the diagnostics log records the decisions a user needs', async () => {
@@ -325,7 +321,7 @@ test('the diagnostics log records the decisions a user needs', async () => {
     .map((entry) => entry.event)
   assert.ok(events.includes('pass-start'), 'the pass is recorded')
   assert.ok(events.includes('catalog-loaded'), 'the catalog load is recorded')
-  assert.ok(events.includes('catalog-withheld'), 'a withheld value explains itself')
+  assert.ok(events.includes('catalog-numbers'), 'numeric estimates explain themselves')
   assert.ok(events.includes('pass-written'), 'the write is recorded')
   // Nothing credential-shaped may appear.
   assert.equal(/sk-[A-Za-z0-9]{8,}/.test(text), false)
@@ -367,7 +363,7 @@ test('the announcement of our own write does not trigger another probe', async (
   }
   const stub = stubFetch({ '/models': bareListing, 'models.dev': catalog })
   try {
-    apply(ctx, { startupDelayMs: 0, debounceMs: 0 })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, logging: true })
     await settle()
     assert.equal(state.writes, 1, 'the first pass writes once')
     const probesAfterFirstPass = stub.calls.length

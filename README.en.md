@@ -1,252 +1,120 @@
 # dsh-model-capability-detector
 
-Detects and fills in a model's capabilities when you import a provider, instead of
-leaving you to type each field by hand.
+Collect model context size, output limits, image support and reasoning levels when fetching or saving a third-party API provider in DSH. Explicit API metadata takes precedence; missing fields can fall back to [models.dev](https://models.dev).
 
-> 中文文档（主要版本）：[README.md](README.md)
+> 中文文档：[README.md](README.md)
 
-## What this solves
+## Triggers and persistence
 
-The DSH Models page does request a provider's model list, but it only adopts
-`id`, `name`, `contextWindow`, `maxTokens`, and input modalities — and only when
-you press "fetch models". Metadata that does not use exactly those field names is
-dropped, and reasoning levels are never fetched at all.
+- **Fetch available models:** interrogates custom endpoints immediately, fills missing candidate metadata from the public catalog and returns context, output limits and input modalities to the editor draft. Fetching alone does not save configuration.
+- **Save or edit a provider:** `settings/document-updated` schedules a pass that fills missing fields, including reasoning levels.
+- **Reload and startup:** `app-boot/config-reload` and a delayed startup pass cover existing configurations.
 
-This plugin reads the same listing and writes back the capabilities it
-**explicitly discloses**:
+Existing values are preserved unless `overwrite: true`. Only routes declared in the user's own profile layer are rewritten. Writes use `settings.update` with revision checks and the normal Loader/HMR flow.
 
-| Field | Meaning |
+DSH currently exposes no model-discovery completion event, and a namespace cannot register a second discovery handler. The plugin therefore installs a reversible wrapper around the public `llm.discoverModels` method, scoped to `settingsNs` and custom routes with an explicit `baseURL`. Built-in catalog providers keep their original discovery. It does not access private discovery registries or alter HTTP/RPC transport. Set `discoveryTrigger: false` to disable this bridge. Changes to DSH's discovery method or draft interface require compatibility verification.
+
+Core discovery candidates do not carry reasoning levels. The plugin retains only parsed capability metadata in an in-memory cache: at most 8 entries for 5 minutes. Endpoint, protocol, credential and custom-header SHA-256 fingerprints isolate entries without retaining raw credentials or response bodies. Saving a matching draft reuses that metadata; expired or changed targets are probed again. Unsaved drafts are never persisted by the background pass.
+
+## Source priority and conflicting limits
+
+| Source | Policy |
 |---|---|
-| `contextWindow` | how much context the model accepts |
-| `maxTokens` | the output cap it advertises |
-| `input` | `["text"]` or `["text", "image"]` |
-| `reasoningEfforts` | the thinking levels it offers; `false` when it has none |
+| Existing configuration | Preserved unless overwrite is enabled |
+| Current provider API | Takes precedence for every disclosed field |
+| Catalog numeric fields | Minimum valid positive safe integer for one resolved identity |
+| Catalog modalities | Disclosed entries must agree |
+| Catalog reasoning levels | Intersection of disclosed level sets; explicit reasoning/non-reasoning conflicts are withheld |
+| Unknown or ambiguous identity | Leave unchanged |
 
-## When it runs
+For example, `128000`, `131072` and `200000` resolve to **128000**, without rounding to K/M units. Token limits are integers already; rounding cannot resolve differences between providers. Fractions, non-positive values and unsafe integers are ignored.
 
-- After a provider profile is saved or edited on the Models page
-  (`settings/document-updated`).
-- After the profile's patches are reconciled (`app-boot/config-reload`).
-- Once a few seconds after startup, covering a profile whose endpoint was
-  unreachable or whose plugin was disabled at the time.
+The minimum is a conservative estimate, not a guarantee for an unpublished resale endpoint. It may trigger earlier context compaction. Prefer explicit endpoint limits or your own known settings. The plugin sends no inference requests to measure limits and consumes no chat tokens.
 
-Bursts of configuration writes are coalesced into one probe, and only one probe
-runs at a time.
-
-## How a capability is read
-
-Listings disagree on field names, nesting, and even on whether a capability is a
-boolean, a list, or a string. Detection covers the common spellings:
-
-- **Context** — `contextWindow`, `context_window`, `context_length`,
-  `max_context_length`, `max_model_len`, `max_input_tokens`, `limit.context`,
-  `top_provider.context_length`.
-- **Output cap** — `maxOutputTokens`, `max_output_tokens`, `max_tokens`,
-  `max_completion_tokens`, `limit.output`, `top_provider.max_completion_tokens`.
-- **Image input** — `architecture.input_modalities`, `input_modalities`,
-  `modalities.input`, `input`, `architecture.modality` (such as
-  `text+image->text`), plus the `capabilities.vision`, `supports_vision`, and
-  `vision` flags.
-- **Reasoning levels** — `reasoning.supported_efforts`, `reasoning.efforts`,
-  `reasoning_efforts`, `thinking_levels`, `supported_thinking_levels`,
-  `parameters.reasoning_effort.enum`, with vendor spellings mapped onto pi-ai's
-  vocabulary (`none` → `off`, `mid` → `medium`, `extra high` → `xhigh`,
-  `ultra` → `max`).
-
-Both envelope shapes are read: OpenAI's `{ "data": [...] }` array and the
-`{ "models": { "<id>": {…} } }` map some gateways use.
-
-**A capability the endpoint does not disclose is never written.** Guessing costs
-more than silence here: an inflated `contextWindow` silently truncates
-conversations, and a wrong `input` list blocks images the model does support.
-
-## Scope and write policy
-
-Only routes **your own profile layer declares** are inspected and rewritten. A
-route an installed bundle declares is left alone, so the bundle's future updates
-are not shadowed by a frozen copy.
-
-Existing values win by default: only blank fields are filled. Set
-`overwrite: true` to replace values the listing discloses.
-
-The write goes through the settings service, so it lands in the profile's own
-`cordis.patch.yml` and takes effect through the normal Loader path — no restart.
-
-## Public-catalog fallback
-
-Many resale gateways answer `/models` with nothing but `{"id":"...","object":"model"}`,
-disclosing no capability at all. In that case the plugin consults the public
-[models.dev](https://models.dev) catalog (~5.8 MB, cached at
-`$DSH_HOME/cache/model-capability-detector/catalog.json` for 7 days).
-
-**The fallback is per-field, not wholesale**, because one model name means
-different things to different providers — resale channels routinely serve a
-truncated context window. Measured agreement across catalog entries that share a
-name:
-
-| Field | Agreement | Default |
-|---|---|---|
-| Image input | 87.1% | enabled |
-| Reasoning levels | 79.4% | enabled |
-| Context window | 52.1% | **off**, needs `catalogNumbers: true` |
-| Output cap | 47.3% | **off**, needs `catalogNumbers: true` |
-
-An inflated context window silently truncates conversations, which is the worst
-failure mode here; a wrong modality list or reasoning level surfaces immediately
-as an attachment that will not send or a request the API rejects.
-
-Even for an enabled field, a value is written only when **every catalog entry
-carrying that name agrees**. On disagreement the candidates are recorded in the
-log and the configured value is left alone.
-
-### Name normalization
-
-Third-party naming differences are handled in two steps: drop the provider
-segment before the last `/`, then lowercase and keep only alphanumerics. So
-`GPT-6.1-SOL`, `gpt_6_1_sol`, `Gpt-6.1-Sol`, and `openai/gpt-6.1-sol` all reach
-one identity.
-
-Two cases refuse rather than guess:
-
-- **No match**: `gpt-9-ultra`, or a dated `gpt-6.1-sol-2026-01-01`, resolves to
-  `unknown` and is left for you to type.
-- **Ambiguous identity**: when one name can reach two distinct catalog identities
-  (a dated and an undated entry, say), the answer is `ambiguous` — never the
-  first one found.
-
-## Diagnostics log
-
-DSH's logger keeps a 1000-entry in-memory ring and this deployment registers no
-sink that writes to disk, so a failed pass leaves **no record anywhere** —
-"decided not to write" and "never ran" look identical. That is the root cause of
-hard-to-diagnose behaviour.
-
-Set `logFile` to enable an optional JSONL diagnostics log:
+Strict alternatives:
 
 ```yaml
-    logFile: "~/.dsh/logs/model-capability-detector.log"
+catalogNumericStrategy: consensus  # accept a numeric field only when values agree
+# Or:
+catalogNumbers: false             # disable numeric catalog fallback
 ```
 
-It records each probed route, how many fields it disclosed, catalog hits and
-conflicts, and the write plan and result. **No credential is recorded**: URLs are
-stripped of their query string, and neither keys nor response bodies ever reach
-it. A file over 2 MiB is rotated once, keeping one generation.
+`catalogFallback: false` disables the catalog entirely. Catalog lookup fills missing fields individually, and is skipped when the API discloses every eligible field. API failures may still allow catalog fallback; later settings changes can retry the API.
 
-Empty (the default) disables it and produces no disk writes at all.
+The catalog index is cached at `$DSH_HOME/cache/model-capability-detector/catalog.json` for 7 days by default. Cache reuse and stale fallback require matching source URL fingerprints and cache versions. Raw source URLs are not stored. A failed refresh may reuse a matching stale cache.
 
-## The HMR transaction constraint
+Names are matched by dropping the prefix before the final `/`, lowercasing and retaining alphanumerics. Version and date suffixes are not stripped. Names reaching multiple catalog identities are rejected rather than resolved arbitrarily.
 
-`settings.update` reaches `configEditor.edit`, which wraps its work in
-`hmr.runExclusive` and refuses a nested transaction with
-`HMR transactions cannot be nested`. The Loader activates a plugin inside that
-same exclusive scope, and `app-boot/config-reload` is published from inside it, so
-a probe started from either inherits the transaction marker through every timer
-and promise it creates.
+## API metadata
 
-The write therefore runs under `AsyncLocalStorage.exit`, the one documented way to
-leave that scope. A fresh `AsyncResource` does not work: it captures the store
-current at construction, which is already the transaction when `apply` runs.
+The parser accepts `{data:[...]}`, `{models:{id:{...}}}`, `{models:[...]}` and top-level arrays. A model-map key is the request ID, even when its record names a different canonical ID.
 
-This is verified end to end, not only in unit tests: after installing, a temporary
-route pointing at a public listing was added to the profile, and its
-`contextWindow`, `maxTokens`, `input`, and `reasoningEfforts` were all filled in
-automatically. That route was then removed and the profile restored.
+- Context: `contextWindow`, `context_window`, `context_length`, `max_model_len`, `max_input_tokens`, `limit.context`, `top_provider.context_length`, and related spellings.
+- Output cap: `max_output_tokens`, `max_tokens`, `max_completion_tokens`, `limit.output`, and related spellings.
+- Image input: modality arrays, `architecture.modality`, and explicit vision flags.
+- Reasoning: explicit effort lists such as `reasoning.supported_efforts`, `reasoning_efforts`, `thinking_levels`, and schema enums. Vendor aliases map to pi-ai levels; a boolean reasoning flag alone does not invent levels.
+
+OpenAI-compatible protocols use `GET {baseURL}/models`. Anthropic uses `GET /v1/models?limit=1000` and accepts roots with or without `/v1`. Custom headers go only to the provider endpoint. Credentials resolve at call time; an explicitly configured reference that cannot resolve never silently becomes an anonymous probe. Saved credentials and headers are reused only when the draft endpoint and protocol match the stored route. A changed endpoint needs its own credential, and a typed key takes precedence over saved authentication headers. Provider redirects are rejected to prevent forwarding custom authentication headers. Response limits are enforced by actual bytes during streaming.
+
+## Logging and privacy
+
+**All plugin logging is off by default:** `logging: false` and `logFile: ""` suppress both Host and diagnostic-file output. Public catalog caching may still write to disk independently.
+
+Enable diagnostics explicitly:
+
+```yaml
+logging: true                                # DSH Host logger only
+logFile: "logs/model-capability-detector.log"  # JSONL file plus Host logging
+```
+
+An empty path disables the file; also set `logging: false` to return to full silence. Relative paths and `~/` resolve against DSH home. For example, use `~/logs/detector.log` without adding another `.dsh` segment.
+
+Logs contain decisions and capability fields, not raw credentials, headers or response bodies. URL userinfo, query strings, fragments and common credential patterns are redacted. Errors are not passed through as raw objects. A file above 2 MiB retains one `.1` generation. Route names and model IDs can still describe your deployment, so review diagnostic files before sharing. Environment files, local caches and logs are ignored by Git by default.
 
 ## Configuration
 
-Edit the row in your profile's `cordis.patch.yml`:
+Override the plugin row in your profile patch:
 
 ```yaml
 - id: dsh-model-capability-detector
-  name: "dsh-model-capability-detector"
+  name: dsh-model-capability-detector
   config:
-    settingsNs: llm-pi-ai     # profile entry id of the adapter whose providers to fill
-    enabled: true             # false turns automatic detection off entirely
-    overwrite: false          # true replaces values you already set
-    dryRun: false             # true only logs the plan, without writing
-    timeoutMs: 15000          # per-endpoint listing timeout, in milliseconds
-    debounceMs: 800           # quiet period after a settings change
-    startupDelayMs: 3000      # delay before the startup pass
+    settingsNs: llm-pi-ai
+    enabled: true
+    overwrite: false
+    dryRun: false
+    timeoutMs: 15000
+    debounceMs: 800
+    startupDelayMs: 3000
     maxResponseBytes: 4194304
-    catalogFallback: true     # false never queries the public catalog
-    catalogUrl: "https://models.dev/api.json"
-    catalogTimeoutMs: 30000   # catalog download timeout
-    catalogMaxBytes: 16777216 # catalog size ceiling
-    catalogTtlMs: 604800000   # cache lifetime, 7 days by default
-    catalogNumbers: false     # true also trusts context window and output cap
-    logFile: ""               # diagnostics log path; empty disables it
+    catalogFallback: true
+    catalogUrl: https://models.dev/api.json
+    catalogTimeoutMs: 30000
+    catalogMaxBytes: 16777216
+    catalogTtlMs: 604800000
+    catalogNumbers: true
+    catalogNumericStrategy: minimum
+    discoveryTrigger: true
+    logging: false
+    logFile: ""
 ```
 
-When onboarding a new gateway, start with `dryRun: true`: the planned changes are
-logged and the profile is left untouched.
+`dryRun: true` computes the write plan without persisting it; enable `logging` or `logFile` to view it. Draft discovery candidates can still be returned.
 
-## Credentials
+When upgrading from 1.1, explicit profile overrides such as `catalogNumbers: false` or a nonempty `logFile` remain effective. Change your override to adopt the new numeric policy. Previously populated numeric values remain untouched unless overwrite is enabled.
 
-The listing request uses the route's own `apiKeyEnv` reference, resolved through
-the credentials service at call time — the same reference the adapter uses, so a
-key rotated on the Models page takes effect without a restart. A route with no
-`apiKeyEnv` is probed without an auth header, which is correct for a local vLLM or
-Ollama endpoint.
+## Stability and validation
 
-Custom `headers` configured on the route are sent as well, so a gateway that needs
-an extra header still answers.
+Background passes are serialized and settings bursts are coalesced. Configuration is reread before writing, so a slow request cannot replace arrays built from a newer user edit. Unloading cancels pending requests, timers and capability caches and prevents late writes. The existing HMR transaction-scope escape is retained for settings updates.
 
-## Failure behaviour
-
-An unreachable endpoint, a rejected key, or an unreadable listing logs one warning
-naming the route and the reason, and changes nothing. It never blocks the import:
-the profile is already saved by the time this plugin runs.
-
-If two writes race, the stale revision is refused and the resulting document event
-schedules another probe against the fresh value.
-
-## Layout
-
-```
-index.js                    Host plugin: listener, endpoint probe, fallback, write-back
-lib/detect.js               Pure listing readers: capabilities, levels, URL, headers
-lib/plan.js                 Pure merge with per-field catalog gating
-lib/catalog.js              Pure catalog: index, name matching, agreement, cache
-lib/diagnostics.js          Optional JSONL log with redaction and rotation
-test/detect.test.mjs        Listing parsing and merge unit tests
-test/catalog.test.mjs       Catalog fallback and name-matching unit tests
-test/diagnostics.test.mjs   Redaction, concurrency, and rotation tests
-test/fallback.test.mjs      Fallback integration through the real pass
-test/plugin.test.mjs        Behaviour tests for apply(), including the HMR scope case
-test/live-probe.mjs         Read-only probe against a public listing
-cordis.patch.yml            The bundle row this package inserts
+```sh
+node --test test/*.test.mjs
 ```
 
-## Running the tests
+Tests use synthetic fixtures and fake fetch, without real provider credentials. They cover parsing, numeric conflicts, cache-source isolation, redaction, fetch-then-save, unload cancellation, concurrent edits and HMR. Offline tests do not establish browser acceptance; verify actual Models-page behavior against the target DSH version.
 
-```bash
-node --test test/detect.test.mjs test/catalog.test.mjs test/diagnostics.test.mjs test/fallback.test.mjs test/plugin.test.mjs
-```
+## Installation
 
-## Installing
+Install the local directory or published package through DSH's plugin manager. An Agent uses `plugin_manager` with `install_bundle` and the absolute plugin-directory target. Installation affects all sessions in the current profile; perform it when ready to activate this version.
 
-Install the local directory into the current profile:
-
-```
-plugin_manager install_bundle target=<absolute path to this directory>
-```
-
-Or with the DSH CLI:
-
-```bash
-dsh plugin --profile <profile> add ./dsh-model-capability-detector
-```
-
-Once published to npm, it can be installed from the registry directly.
-
-## Known limits
-
-- Only routes declared by the profile's own layer are handled; bundle-declared
-  routes are left to their declaring bundle.
-- Fields an endpoint does not disclose are left as they are, never inferred.
-- The catalog fallback is gated per field: numeric fields are off unless
-  `catalogNumbers: true` is set explicitly.
-- A name that cannot be matched, or that maps to an ambiguous identity, is never
-  written; type it by hand.
-- Host-side only, with no separate UI; results appear in the profile configuration
-  and in the diagnostics log.
+The implementation is Host-only. There are no installation scripts, runtime dependency downloads or changes to the DSH installation. See `index.js`, `lib/catalog.js`, `lib/detect.js`, `lib/discovery.js`, `lib/http.js` and `lib/diagnostics.js` for the implementation.

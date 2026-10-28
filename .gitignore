@@ -1,8 +1,14 @@
 # Dependencies
 node_modules/
 
-# Local logs and spill output
+# Local logs, credentials and cache
 *.log
+*.log.*
+*.jsonl
+.env
+.env.*
+logs/
+cache/
 
 # Editor and OS files
 .DS_Store
