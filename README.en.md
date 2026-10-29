@@ -115,6 +115,20 @@ Tests use synthetic fixtures and fake fetch, without real provider credentials. 
 
 ## Installation
 
-Install the local directory or published package through DSH's plugin manager. An Agent uses `plugin_manager` with `install_bundle` and the absolute plugin-directory target. Installation affects all sessions in the current profile; perform it when ready to activate this version.
+This repository supports installation directly from GitHub; downloading or generating a `.tgz` archive first is unnecessary. In the DSH **Plugins** page, enter:
+
+```text
+https://github.com/BunnySakura/dsh-model-capability-detector
+```
+
+The pnpm GitHub shorthand also works:
+
+```text
+github:BunnySakura/dsh-model-capability-detector
+```
+
+An Agent uses `plugin_manager` with `install_bundle` and either address as `target`. By default, this installs the repository's default branch. To pin a revision, append `#<tag or full commit SHA>`; that tag or commit must already exist on GitHub. Installation requires connectivity to GitHub and a DSH version satisfying the package's declared requirements.
+
+The repository root already includes the bundle declaration, patch, JavaScript entry point, runtime modules, locales and icon. No compilation or installation scripts are required. Local directories (using an absolute path) and `.tgz` packages can still be installed through the plugin manager. Installation affects all sessions in the current profile; perform it when ready to activate this version.
 
 The implementation is Host-only. There are no installation scripts, runtime dependency downloads or changes to the DSH installation. See `index.js`, `lib/catalog.js`, `lib/detect.js`, `lib/discovery.js`, `lib/http.js` and `lib/diagnostics.js` for the implementation.

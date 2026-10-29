@@ -119,6 +119,20 @@ node --test test/*.test.mjs
 
 ## 安装
 
-通过 DSH 的插件管理器安装本地目录或已发布包；Agent 使用 `plugin_manager` 的 `install_bundle` 操作，目标为插件目录绝对路径。安装会影响当前 profile 的所有会话，请在希望启用该版本时执行。
+本仓库支持直接从 GitHub 安装，无需先下载或生成 `.tgz` 压缩包。在 DSH「插件」页面的安装输入框中填写：
+
+```text
+https://github.com/BunnySakura/dsh-model-capability-detector
+```
+
+也可以使用 pnpm 的 GitHub 简写：
+
+```text
+github:BunnySakura/dsh-model-capability-detector
+```
+
+Agent 使用 `plugin_manager` 的 `install_bundle` 操作，将上述地址作为 `target`。默认安装仓库默认分支；需要固定版本时，在地址末尾追加 `#<tag 或完整 commit SHA>`，对应的 tag 或 commit 必须已推送到 GitHub。安装需要能连接 GitHub，并满足包中声明的 DSH 版本要求。
+
+仓库根目录已包含 bundle 声明、补丁、JavaScript 入口、运行模块、语言资源和图标，无需额外编译或执行安装脚本。仍可通过插件管理器安装本地目录（使用绝对路径）或 `.tgz` 包。安装会影响当前 profile 的所有会话，请在希望启用该版本时执行。
 
 主要实现位于 `index.js`、`lib/catalog.js`、`lib/detect.js`、`lib/discovery.js`、`lib/http.js` 和 `lib/diagnostics.js`。本插件无独立 UI，不修改 DSH 安装文件，也没有安装脚本或运行时下载依赖。
