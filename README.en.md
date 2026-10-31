@@ -16,34 +16,29 @@ DSH currently exposes no model-discovery completion event, and a namespace canno
 
 Core discovery candidates do not carry reasoning levels. The plugin retains only parsed capability metadata in an in-memory cache: at most 8 entries for 5 minutes. Endpoint, protocol, credential and custom-header SHA-256 fingerprints isolate entries without retaining raw credentials or response bodies. Saving a matching draft reuses that metadata; expired or changed targets are probed again. Unsaved drafts are never persisted by the background pass.
 
-## Source priority and conflicting limits
+## Source priority and original specifications
 
-| Source | Policy |
-|---|---|
-| Existing configuration | Preserved unless overwrite is enabled |
-| Current provider API | Takes precedence for every disclosed field |
-| Catalog numeric fields | Minimum valid positive safe integer for one resolved identity |
-| Catalog modalities | Disclosed entries must agree |
-| Catalog reasoning levels | Intersection of disclosed level sets; explicit reasoning/non-reasoning conflicts are withheld |
-| Unknown or ambiguous identity | Leave unchanged |
+Default priority: **existing configuration → current channel API → directly verified original specifications → original-provider records mirrored by models.dev**. Reseller capacities are no longer aggregated into a default minimum.
 
-For example, `128000`, `131072` and `200000` resolve to **128000**, without rounding to K/M units. Token limits are integers already; rounding cannot resolve differences between providers. Fractions, non-positive values and unsafe integers are ignored.
+`catalogNumericStrategy: official` is the new default and applies to all catalog fields. A directly reviewed DeepSeek-V4.1-Flash-1017 record supplies **1048576** context tokens, **393216** output tokens, image input and disclosed reasoning efforts. Sources: the official [release](https://api-docs.deepseek.com/news/news261017/), its [pinned model config](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json) and [API reference](https://api-docs.deepseek.com/api/create-chat-completion/), reviewed 2026-10-31. This exact snapshot remains usable offline. Floating aliases such as `deepseek-flash` resolve through the original-provider catalog record rather than being permanently pinned to an old release.
 
-The minimum is a conservative estimate, not a guarantee for an unpublished resale endpoint. It may trigger earlier context compaction. Prefer explicit endpoint limits or your own known settings. The plugin sends no inference requests to measure limits and consumes no chat tokens.
+Other models use original-provider entries from models.dev with an explicit provider identity and an allowlisted official documentation host; entries with a foreign canonical vendor are excluded. **models.dev is a community mirror; the plugin does not re-verify every website field on each pass.** Receipts distinguish `official-verified` from `original-provider-mirror`. The current host rules cover DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Moonshot and Zhipu. Unrecognized publishers remain unknown.
 
-Strict alternatives:
+Matching preserves punctuation, dates and versions, folding only case and surrounding whitespace. A channel prefix may differ when the complete model name matches. Conflicting identities or field values are withheld. API disclosures win field by field. No inference requests are sent to measure limits.
+
+Original specifications **do not guarantee a reseller exposes the same limits**; receipts retain `channelVerified: false`. Existing values remain unchanged by default. Old minimum estimates cannot be distinguished from manual values and are not raised automatically. Clear a field and save after reviewing the replacement when you want to adopt it.
 
 ```yaml
-catalogNumericStrategy: consensus  # accept a numeric field only when values agree
-# Or:
-catalogNumbers: false             # disable numeric catalog fallback
+catalogNumericStrategy: official   # default: original specifications
+# catalogNumericStrategy: minimum   # explicit legacy reseller minimum
+# catalogNumericStrategy: consensus # explicit legacy numeric consensus
+catalogNumbers: true               # false disables numeric fallback
+catalogFallback: true              # false disables all public fallback, including built-in specifications
 ```
 
-`catalogFallback: false` disables the catalog entirely. Catalog lookup fills missing fields individually, and is skipped when the API discloses every eligible field. API failures may still allow catalog fallback; later settings changes can retry the API.
+The v5 catalog cache lives at `$DSH_HOME/cache/model-capability-detector/catalog.json`, with a default 7-day lifetime. A matching source and format may serve stale data after a failed refresh. Future timestamps are not fresh. The source URL is hashed instead of persisting its query parameters.
 
-The catalog index is cached at `$DSH_HOME/cache/model-capability-detector/catalog.json` for 7 days by default. Cache reuse and stale fallback require matching source URL fingerprints and cache versions. Raw source URLs are not stored. A failed refresh may reuse a matching stale cache.
-
-Names are matched by dropping the prefix before the final `/`, lowercasing and retaining alphanumerics. Version and date suffixes are not stripped. Names reaching multiple catalog identities are rejected rather than resolved arbitrarily.
+After a successful configuration write, `provenance.json` in that directory retains field values, source URLs, time and a SHA-256 route/model/field key. It stores no provider endpoint, key or request headers. Public original model identities may appear in source metadata; keep these local files private.
 
 ## API metadata
 
@@ -52,7 +47,7 @@ The parser accepts `{data:[...]}`, `{models:{id:{...}}}`, `{models:[...]}` and t
 - Context: `contextWindow`, `context_window`, `context_length`, `max_model_len`, `max_input_tokens`, `limit.context`, `top_provider.context_length`, and related spellings.
 - Output cap: `max_output_tokens`, `max_tokens`, `max_completion_tokens`, `limit.output`, and related spellings.
 - Image input: modality arrays, `architecture.modality`, and explicit vision flags.
-- Reasoning: explicit effort lists such as `reasoning.supported_efforts`, `reasoning_efforts`, `thinking_levels`, and schema enums. Vendor aliases map to pi-ai levels; a boolean reasoning flag alone does not invent levels.
+- Reasoning: explicit effort lists such as `reasoning.supported_efforts`, `reasoning_efforts`, `thinking_levels`, and schema enums. Vendor aliases map to pi-ai levels. An API effort list containing only `off` / `none` becomes `reasoningEfforts: false`, preventing reasoning fallback. A boolean reasoning flag alone does not invent levels. Modality strings such as `text->image` are parsed on the input side of the arrow only.
 
 OpenAI-compatible protocols use `GET {baseURL}/models`. Anthropic uses `GET /v1/models?limit=1000` and accepts roots with or without `/v1`. Custom headers go only to the provider endpoint. Credentials resolve at call time; an explicitly configured reference that cannot resolve never silently becomes an anonymous probe. Saved credentials and headers are reused only when the draft endpoint and protocol match the stored route. A changed endpoint needs its own credential, and a typed key takes precedence over saved authentication headers. Provider redirects are rejected to prevent forwarding custom authentication headers. Response limits are enforced by actual bytes during streaming.
 
@@ -93,7 +88,8 @@ Override the plugin row in your profile patch:
     catalogMaxBytes: 16777216
     catalogTtlMs: 604800000
     catalogNumbers: true
-    catalogNumericStrategy: minimum
+    catalogNumericStrategy: official
+    updateCheckOnStartup: false
     discoveryTrigger: true
     logging: false
     logFile: ""
@@ -131,4 +127,14 @@ An Agent uses `plugin_manager` with `install_bundle` and either address as `targ
 
 The repository root already includes the bundle declaration, patch, JavaScript entry point, runtime modules, locales and icon. No compilation or installation scripts are required. Local directories (using an absolute path) and `.tgz` packages can still be installed through the plugin manager. Installation affects all sessions in the current profile; perform it when ready to activate this version.
 
-The implementation is Host-only. There are no installation scripts, runtime dependency downloads or changes to the DSH installation. See `index.js`, `lib/catalog.js`, `lib/detect.js`, `lib/discovery.js`, `lib/http.js` and `lib/diagnostics.js` for the implementation.
+## Plugin updates
+
+Open the **Plugin updates** tab on DSH's Plugins page. Opening it reads local status only. **Check for updates** queries GitHub Releases for the fixed `BunnySakura/dsh-model-capability-detector` repository and shows the stable version, plain-text notes and a fixed-tag installation target. Drafts, prereleases and invalid tags are rejected. A 404 means no published stable release; rate limits and network failures do not interrupt detection.
+
+**Review update** opens confirmation, then hands the selected target to **DSH's native installation dialog**. DSH owns progress, compatibility checks, script approval, failures and restart requirements. This plugin never uninstalls itself, invokes pnpm or authorizes scripts. If DSH refuses replacement as already installed, preserve your overrides and use its uninstall/reinstall flow. A failed install after removal leaves the package uninstalled; atomic rollback is not guaranteed.
+
+`updateCheckOnStartup: false` disables background release requests by default. Enabling it checks once after startup. Results are cached for 24 hours within one process; restarting clears that cache. Manual checks refresh it. The read-only `model_capability_detector_updates` tool exposes `status` and `check`, with no installation action. No channel URLs, model lists, keys or configuration enter these requests.
+
+Maintainers must publish a matching stable GitHub Release and version tag; pushing branch commits alone produces no update notice. Catalog refreshes and code updates are separate. The package version is 1.3.0.
+
+The UI targets DSH 0.2.1-rc.5's plugin-page extension contracts. Existing explicit configuration overrides, including `minimum`, remain effective. The UI becomes available only after this code is installed; offline tests do not establish that the running profile has been updated.

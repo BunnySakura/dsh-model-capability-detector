@@ -8,6 +8,8 @@ import { createDiagnostics, sanitizeMessage } from './lib/diagnostics.js'
 import { configured, listingHeaders, listingUrl, readListing } from './lib/detect.js'
 import { bridgeDiscovery, createDiscoveryCache, waitWithSignal } from './lib/discovery.js'
 import { readJsonResponse } from './lib/http.js'
+import { createProvenance } from './lib/provenance.js'
+import { registerUpdates } from './lib/update-host.js'
 import {
   SAFE_CATALOG_FIELDS, RISKY_CATALOG_FIELDS, describeChanges, describeFallbacks,
   hasBlanks, mergeDetected, sameProviders,
@@ -30,7 +32,8 @@ export const DEFAULT_CONFIG = {
   catalogMaxBytes: 16 * 1024 * 1024,
   catalogTtlMs: DEFAULT_CACHE_TTL_MS,
   catalogNumbers: true,
-  catalogNumericStrategy: 'minimum',
+  catalogNumericStrategy: 'official',
+  updateCheckOnStartup: false,
   discoveryTrigger: true,
   logging: false,
   logFile: '',
@@ -54,7 +57,8 @@ function buildConfigSchema() {
       catalogMaxBytes: z.number().min(1024).default(16 * 1024 * 1024),
       catalogTtlMs: z.number().min(0).default(DEFAULT_CACHE_TTL_MS),
       catalogNumbers: z.boolean().default(true),
-      catalogNumericStrategy: z.union([z.const('minimum'), z.const('consensus')]).default('minimum'),
+      catalogNumericStrategy: z.union([z.const('official'), z.const('minimum'), z.const('consensus')]).default('official'),
+      updateCheckOnStartup: z.boolean().default(false),
       discoveryTrigger: z.boolean().default(true),
       logging: z.boolean().default(false),
       logFile: z.string().default(''),
@@ -96,6 +100,7 @@ async function fetchListing({ baseURL, api, apiKey, headers, timeoutMs, maxRespo
 
 export function apply(ctx, rawConfig) {
   const config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) }
+  if (typeof ctx.inject === 'function' || ctx.get('connection') || ctx.get('tools')) registerUpdates(ctx, config)
   if (config.enabled === false) return
   let disposed = false
   let timer
@@ -109,6 +114,7 @@ export function apply(ctx, rawConfig) {
   const lifetime = new AbortController()
   const discoveryCache = createDiscoveryCache()
   const homePath = ctx.get('dshHomePath')
+  const provenanceStore = createProvenance(typeof homePath === 'function' ? homePath() : undefined)
   const logging = config.logging === true || (typeof config.logFile === 'string' && config.logFile.length > 0)
   const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map((level) => [level, (...args) => {
     if (logging) ctx.logger[level]('%s', sanitizeMessage(format(...args)))
@@ -191,7 +197,8 @@ export function apply(ctx, rawConfig) {
   const enrich = async (providers, detected) => {
     const lookup = needsCatalog(providers, detected) ? await ensureCatalog() : undefined
     return mergeDetected(providers, detected, config.overwrite === true, {
-      resolve: lookup === undefined ? undefined : (id) => resolveCatalog(lookup, id),
+      resolve: config.catalogFallback === false ? undefined : lookup === undefined && config.catalogNumericStrategy !== 'official'
+        ? undefined : (id) => resolveCatalog(lookup ?? toLookup(undefined), id),
       allowedFields: catalogFields,
     })
   }
@@ -275,7 +282,7 @@ export function apply(ctx, rawConfig) {
         logger.warn('model-capability-detector: route "%s" failed: %s', route, sanitizeMessage(error))
       }
     }
-    const { providers, changes, fallbacks } = await enrich(current.providers, detected)
+    const { providers, changes, fallbacks, provenance } = await enrich(current.providers, detected)
     if (disposed) return
     if (changes.length === 0 || sameProviders(providers, current.providers)) {
       if (!failed) lastInspected = signature
@@ -299,6 +306,7 @@ export function apply(ctx, rawConfig) {
     lastInspected = failed ? undefined : JSON.stringify(providers)
     try {
       await outsideTransaction(() => ctx.settings.update(config.settingsNs, { providers }, current.revision))
+      await provenanceStore.record(provenance)
       note('pass-written', { changes: changes.length, fallbacks: fallbacks.length })
       logger.info('model-capability-detector: detected capabilities:\n%s\n%s', report, viaCatalog)
     } catch (error) {

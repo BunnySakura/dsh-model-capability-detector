@@ -16,36 +16,29 @@
 
 DSH 的发现结果结构不传递推理等级。插件在内存中缓存原始能力元数据，最多 8 份、5 分钟，保存时复用；缓存按端点、协议、凭据和自定义头的 SHA-256 指纹隔离，**不保存原始密钥或响应体**。过期、端点或凭据变化后重新探测。未保存的草稿不会被后台写入。
 
-## 数据优先级与上下文冲突
+## 数据优先级与原厂规格
 
-| 来源 | 行为 |
-|---|---|
-| 已有配置 | 默认保留；`overwrite: true` 才会替换 |
-| 当前渠道 API | 对披露字段优先于公开目录 |
-| 公开目录数值 | 默认取同一已解析模型身份的最小有效正安全整数 |
-| 公开目录输入模态 | 已披露的条目必须一致，否则不填 |
-| 公开目录推理等级 | 取已披露等级的交集；明确支持/不支持推理的冲突不填 |
-| 无数据或身份歧义 | 保持空白，等待手工填写 |
+默认顺序：**保留已有配置 → 当前渠道 API → 直接核验的原厂规格 → models.dev 的原厂记录镜像**。不会默认聚合其他转售渠道，也不取它们的最小值。
 
-例如目录记录 `128000`、`131072`、`200000`，默认填写 **128000**，不按 K/M 四舍五入。token 数本来就应该是整数；把候选值取整不能解决不同渠道的容量差异，数值越大也不代表信息越准确。非整数、0、负数及超出 JavaScript 安全整数范围的值会被忽略。
+`catalogNumericStrategy: official` 是新默认值，影响全部目录能力字段。已内置直接核验的 DeepSeek-V4.1-Flash-1017：上下文 **1048576**、最大输出 **393216**、图片输入及明确披露的推理等级。来源为官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和[API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期为 2026-10-31。它可在目录不可用时使用，仅精确版本 ID 命中；浮动名称 `deepseek-flash` 通过原厂目录记录解析，不永久绑定到旧快照。
 
-最小值是一种保守估计，**不能保证未公开的转售渠道也支持这个容量**，也可能导致提前压缩上下文。更精确的渠道 API 数据或你手工设置的容量应优先。插件不会发送推理请求来探测真实上限，不会消耗聊天 token。
+其他模型使用 models.dev 时，要求明确的原厂 provider、受信任的原厂文档域名，并排除 canonical ID 属于其他厂商的记录。**models.dev 是社区镜像，插件没有逐次抓取并验证每个官网字段。** 数据来源记录会明确区分 `official-verified` 与 `original-provider-mirror`。当前原厂域名规则覆盖 DeepSeek、OpenAI、Anthropic、Google、xAI、Mistral、Cohere、Moonshot 和智谱；未识别厂商保持空白。
 
-可选择更严格的策略：
+匹配保留标点、日期与版本后缀，只忽略大小写及首尾空白；允许渠道前缀不同但完整模型名一致。不同原厂身份或同一身份披露的字段有冲突时，不自动填写该字段。API 只披露部分字段时，只补其余字段。不会发送推理请求来测容量。
+
+官网规格表示原厂能力，**不保证第三方渠道开放相同上限**。来源中的 `channelVerified: false` 保留这一事实。用户已有值默认不覆盖；旧版本写入的低值因无法区分手工配置，不自动上调。确认要采用新值时，可先清空对应字段再保存。
 
 ```yaml
-catalogNumericStrategy: consensus  # 数值只有完全一致才填
-# 或：
-catalogNumbers: false              # 关闭上下文与输出上限的目录兜底
+catalogNumericStrategy: official   # 默认：原厂规格
+# catalogNumericStrategy: minimum   # 显式兼容模式：跨渠道最小值
+# catalogNumericStrategy: consensus # 显式兼容模式：跨渠道数值一致才填
+catalogNumbers: true               # false 可关闭数值目录兜底
+catalogFallback: true              # false 关闭所有公开来源兜底，包括内置规格
 ```
 
-`catalogFallback: false` 则完全关闭公开目录。API 只披露部分字段时，目录只补其余字段；API 已披露全部待填字段时不下载目录。API 不可达时仍可用目录补齐缺失字段，但后续设置变化仍允许重试 API。
+目录缓存为 v5，位于 `$DSH_HOME/cache/model-capability-detector/catalog.json`，默认有效期 7 天。同源同格式的过期缓存可在刷新失败时复用；未来时间戳不能视为新鲜。仅保存源 URL 指纹，不保存其查询参数。
 
-目录缓存位于 `$DSH_HOME/cache/model-capability-detector/catalog.json`，默认 7 天有效；切换源 URL 会使旧源缓存失效，缓存仅保存源 URL 的 SHA-256 指纹。刷新失败可以使用同源同版本的过期缓存。缓存格式升级后旧缓存会重新获取。
-
-### 名称匹配
-
-先去掉最后一个 `/` 之前的前缀，再转小写并保留字母数字。因此 `GPT-6.1-SOL`、`gpt_6_1_sol`、`openai/gpt-6.1-sol` 可命中同一身份。日期、版本等尾缀不会被主动删除。同名可达多个不同目录身份时拒绝填写，不任取一条。
+每次配置成功写入后，来源记录保存到同目录的 `provenance.json`：字段和值、来源 URL、记录时间，以及路由/模型/字段的 SHA-256 标识。不保存渠道地址、密钥或请求头。公开原厂模型名仍可能出现在来源元数据中；这些本地文件不应分享。
 
 ## API 解析
 
@@ -56,7 +49,7 @@ catalogNumbers: false              # 关闭上下文与输出上限的目录兜�
 | `input` | `architecture.input_modalities`、`modalities.input`、`input`、`supports_vision`、`vision` 等 |
 | `reasoningEfforts` | `reasoning.supported_efforts`、`reasoning_efforts`、`thinking_levels`、`parameters.reasoning_effort.enum` 等 |
 
-支持 `{data:[...]}`、`{models:{id:{...}}}`、`{models:[...]}` 和顶层数组。模型映射的 key 是实际请求 ID，优先于条目内的 canonical id。等级会归一化到 pi-ai 词汇，例如 `none → off`、`mid → medium`、`extra high → xhigh`；仅声明支持推理而未披露等级时不会凭空生成等级。
+支持 `{data:[...]}`、`{models:{id:{...}}}`、`{models:[...]}` 和顶层数组。模型映射的 key 是实际请求 ID，优先于条目内的 canonical id。等级会归一化到 pi-ai 词汇，例如 `none → off`、`mid → medium`、`extra high → xhigh`；API 等级仅含 `off` / `none` 时写入 `reasoningEfforts: false`，阻止目录补入推理能力。仅声明支持推理而未披露等级时不会凭空生成等级。`text->image` 等模态字符串只解析箭头左侧的输入部分，不把图片输出视为识图能力。
 
 OpenAI 兼容协议请求 `GET {baseURL}/models`；Anthropic 请求 `GET /v1/models?limit=1000`，接受根地址或带 `/v1` 的地址。自定义请求头会发送到渠道端点，API key 经 credentials 服务即时解析；显式设置但无法解析的引用不会退化成匿名请求。草稿只有在端点和协议与已保存渠道一致时才复用其凭据及请求头；换地址后需提供新凭据，显式输入的新密钥优先。API 请求拒绝重定向，避免自定义认证头被转发。响应在读取时按字节限制大小，超限即取消。
 
@@ -97,7 +90,8 @@ logFile: "logs/model-capability-detector.log"  # 显式路径启用 JSONL 文件
     catalogMaxBytes: 16777216
     catalogTtlMs: 604800000
     catalogNumbers: true
-    catalogNumericStrategy: minimum
+    catalogNumericStrategy: official
+    updateCheckOnStartup: false
     discoveryTrigger: true
     logging: false
     logFile: ""
@@ -135,4 +129,14 @@ Agent 使用 `plugin_manager` 的 `install_bundle` 操作，将上述地址作�
 
 仓库根目录已包含 bundle 声明、补丁、JavaScript 入口、运行模块、语言资源和图标，无需额外编译或执行安装脚本。仍可通过插件管理器安装本地目录（使用绝对路径）或 `.tgz` 包。安装会影响当前 profile 的所有会话，请在希望启用该版本时执行。
 
-主要实现位于 `index.js`、`lib/catalog.js`、`lib/detect.js`、`lib/discovery.js`、`lib/http.js` 和 `lib/diagnostics.js`。本插件无独立 UI，不修改 DSH 安装文件，也没有安装脚本或运行时下载依赖。
+## 插件更新
+
+在 DSH「插件」页面打开「插件更新」标签。页面仅读取本机缓存状态；点击「检查更新」后访问固定仓库 `BunnySakura/dsh-model-capability-detector` 的 GitHub Releases，显示最新稳定版本、纯文本发布说明和固定 tag 的安装目标。草稿、预发布和无效 tag 不会成为候选；GitHub 404 表示尚无正式发布，限流或网络失败不会影响检测。
+
+「查看并更新」显示确认内容；确认后调用 **DSH 插件页原生安装对话框**。安装进度、兼容性检查、脚本授权、失败及是否重启由 DSH 管理。插件不自行卸载旧包、不执行 pnpm、不自动授权脚本。如果当前 DSH 以「已安装」拒绝覆盖，请先保留配置覆盖项，再使用其卸载、重新安装流程；卸载成功后安装失败会保持未安装状态，无法保证原子回滚。
+
+`updateCheckOnStartup: false` 默认不额外联网。开启后，每次启动延迟检查一次；同一进程缓存 24 小时，重启会清空缓存。手动检查可刷新缓存。只读 Agent 工具 `model_capability_detector_updates` 提供 `status` 与 `check`，不执行升级。检查不上传渠道地址、模型列表、API key 或配置。
+
+维护者需发布 1.3.0 稳定 GitHub Release 和对应版本 tag；仅推送分支提交不会产生更新提示。插件自身的公开模型目录刷新与代码更新独立。
+
+此实现使用 DSH 0.2.1-rc.5 的插件页扩展接口。用户配置覆盖项会按 DSH 的配置层继续生效；显式保留的 `minimum` 不会被新默认值强制替换。界面必须在安装本轮代码后才可使用；离线测试不代表当前运行实例已经更新。

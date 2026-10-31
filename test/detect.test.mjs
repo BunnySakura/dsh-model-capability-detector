@@ -119,6 +119,28 @@ test('image input is read from modality lists, flags, and the modality string', 
   assert.equal(detectInput({}), undefined)
 })
 
+test('invalid headers never expose their raw values through errors', () => {
+  for (const [key, headers] of [
+    [undefined, { 'x-tenant': 'synthetic-private\nvalue' }],
+    ['synthetic-key\nvalue', undefined],
+    [undefined, { 'invalid header': 'synthetic-private' }],
+  ]) {
+    assert.throws(() => listingHeaders('openai', key, headers), (error) => {
+      assert.equal(error.message, 'model listing has an invalid request header or API key')
+      assert.equal(error.cause, undefined)
+      return true
+    })
+  }
+})
+
+test('output image modality does not imply image input', () => {
+  for (const modality of ['text->image', 'text->text+image', 'text->image+audio']) {
+    assert.deepEqual(detectInput({ architecture: { modality } }), ['text'])
+  }
+  assert.deepEqual(detectInput({ modality: 'image->text' }), ['text', 'image'])
+  assert.equal(detectInput({ modality: 'audio->image' }), undefined)
+})
+
 test('reasoning detection prefers disclosed levels over booleans', () => {
   assert.deepEqual(detectReasoning({ reasoning: { supported_efforts: ['none', 'low', 'high'] } }), {
     off: null,
@@ -129,7 +151,16 @@ test('reasoning detection prefers disclosed levels over booleans', () => {
   assert.equal(detectReasoning({ supports_reasoning: false }), false)
   assert.equal(detectReasoning({}), undefined)
   // A non-reasoning disclosure must not be reported as an efforts dict.
-  assert.equal(detectReasoning({ reasoning: { supported_efforts: ['none'] } }), undefined)
+  assert.equal(detectReasoning({ reasoning: { supported_efforts: ['none'] } }), false)
+  assert.equal(detectReasoning({ reasoning_efforts: ['disabled', 'off'] }), false)
+  assert.equal(detectReasoning({ reasoning_efforts: ['unknown'] }), undefined)
+  const { providers: result } = mergeDetected(
+    { route: { models: [{ id: 'model' }] } },
+    new Map([['route', new Map([['model', capabilitiesOf({ id: 'model', reasoning_efforts: ['none'] })]])]]),
+    false,
+    { allowedFields: ['reasoningEfforts'], resolve: () => ({ safe: { reasoningEfforts: { high: 'high' } } }) },
+  )
+  assert.equal(result.route.models[0].reasoningEfforts, false)
 })
 
 test('OpenRouter-shaped entries yield every disclosed capability', () => {

@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { apply } from '../index.js'
+import { apply as applyPlugin } from '../index.js'
+
+// Existing fixtures exercise the explicitly selected legacy aggregation mode.
+const apply = (ctx, config) => applyPlugin(ctx, { catalogNumericStrategy: 'minimum', ...config })
 
 /** Merge plain objects recursively with array replacement, as settings does. */
 function mergeDeep(under, over) {

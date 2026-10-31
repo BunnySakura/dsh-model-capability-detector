@@ -19,9 +19,12 @@ import {
   isFresh,
   loadCatalog,
   matchKey,
-  resolveName,
+  resolveName as resolveCatalogName,
   toLookup,
 } from '../lib/catalog.js'
+
+/** Legacy aggregation is still available through an explicit option. */
+const resolveName = (lookup, name, options) => resolveCatalogName(lookup, name, { numericStrategy: 'minimum', ...options })
 
 /** Build a catalog document shaped like models.dev's. */
 function catalog(providers) {
@@ -244,12 +247,26 @@ test('the index round-trips through JSON unchanged', () => {
   assert.deepEqual(resolveName(toLookup(restored), 'gpt-6.1-sol'), resolveName(toLookup(index), 'gpt-6.1-sol'))
 })
 
+test('empty and unsupported catalog modalities make no text-only claim', () => {
+  for (const input of [[], ['audio'], ['unknown'], [null]]) {
+    const answer = resolveWith(catalog({ a: [{ id: 'model', modalities: { input } }] }), 'model')
+    assert.equal(answer.safe.input, undefined)
+  }
+  const answer = resolveWith(catalog({
+    a: [{ id: 'model', modalities: { input: [] } }],
+    b: [{ id: 'model', modalities: { input: ['text', 'image'] } }],
+  }), 'model')
+  assert.deepEqual(answer.safe.input, ['text', 'image'])
+})
+
 test('isFresh honours the version and the TTL', () => {
   const now = 1_700_000_000_000
   assert.equal(isFresh({ version: CACHE_VERSION, fetchedAt: now - 10 }, now, 1000), true)
   assert.equal(isFresh({ version: CACHE_VERSION, fetchedAt: now - 2000 }, now, 1000), false)
   // A version bump invalidates a cache built by the previous format.
   assert.equal(isFresh({ version: CACHE_VERSION + 1, fetchedAt: now }, now, 1000), false)
+  assert.equal(isFresh({ version: CACHE_VERSION, fetchedAt: now + 10 }, now, 1000), false)
+  assert.equal(isFresh({ version: CACHE_VERSION, fetchedAt: now }, now, 0), false)
   assert.equal(isFresh({ version: CACHE_VERSION }, now, 1000), false)
   assert.equal(isFresh(undefined, now, 1000), false)
 })
@@ -445,6 +462,26 @@ test('catalog cache persists only the source hash and reuses a fresh matching so
     const next = await loadCatalog(loadOptions)
     assert.equal(next.source, 'cache')
     assert.equal(memory.calls.length, 1)
+  })
+})
+
+test('a future cache timestamp triggers a refresh after clock rollback', async (t) => {
+  await withMemoryCache(t, async (memory) => {
+    await loadCatalog(loadOptions)
+    const next = await loadCatalog({ ...loadOptions, now: loadOptions.now - 100 })
+    assert.equal(next.source, 'network')
+    assert.equal(memory.calls.length, 2)
+  })
+})
+
+test('catalog HTTP errors cancel their response body', async (t) => {
+  await withMemoryCache(t, async (memory) => {
+    let cancelled = false
+    memory.respond(() => new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 503 }))
+    const next = await fetchCatalog(loadOptions)
+    assert.equal(next.ok, false)
+    assert.equal(next.reason, 'catalog answered 503')
+    assert.equal(cancelled, true)
   })
 })
 
