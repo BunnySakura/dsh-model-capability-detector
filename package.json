@@ -2,7 +2,7 @@
   "name": "dsh-model-capability-detector",
   "version": "1.5.0",
   "type": "module",
-  "description": "DSH plugin that detects a model's context window, image input, and reasoning levels from a provider's model listing — with a public-catalog fallback — and writes them into the llm-pi-ai profile.",
+  "description": "DSH plugin that fills in a third-party provider's model context window, maximum output, image input and reasoning levels from the provider API, original-provider documentation and agreeing third-party sources.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -28,6 +28,7 @@
     "icon.svg",
     "README.md",
     "README.en.md",
+    "docs",
     "CHANGELOG.md",
     "LICENSE"
   ],

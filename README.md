@@ -1,158 +1,135 @@
 # dsh-model-capability-detector
 
-在 DSH 中获取或保存第三方 API 渠道时，自动采集模型上下文长度、输出上限、识图能力和推理等级。API 明确披露的字段优先，其次是原厂文档，再次是至少两家一致的权威第三方（OpenRouter、LiteLLM、[models.dev](https://models.dev)）。
+在 DSH 中添加或保存第三方 API 渠道时，自动补全模型的上下文长度、最大输出、识图能力和推理等级，不必逐个手填。
 
 > English: [README.en.md](README.en.md)
 
-## 触发与写入
+## 功能
 
-- 点击「获取可用模型」时：第三方渠道立即请求模型列表，解析能力并补充公开目录数据，将上下文、输出上限和输入模态交给模型编辑草稿。**获取列表本身不会保存配置**。
-- 保存或编辑渠道后：监听 `settings/document-updated`，将缺失能力写入 profile；推理等级也在此时补入。
-- profile 重载后，以及启动数秒后：执行一次兜底扫描。
-
-默认只补空字段，保留手工填写的值；`overwrite: true` 可覆盖已有值。仅改动 profile 自己层声明的路由，bundle 继承的路由不回写。保存经 `settings.update` 完成，带版本检查，并通过现有 HMR 流程生效。
-
-模型获取接入仅作用于 `settingsNs` 指定命名空间、带明确 `baseURL` 的自定义渠道；内置目录渠道继续使用原适配器。DSH 当前没有模型发现完成事件，也不允许重复注册同一命名空间的 discovery，因此插件对公共 `llm.discoverModels` 方法做可卸载包装，不访问私有发现注册表，不改 HTTP/RPC 传输。`discoveryTrigger: false` 可单独关闭这一接入；将来 DSH 若改变该方法或草稿接口，需要重新验证兼容性。
-
-DSH 的发现结果结构不传递推理等级。插件在内存中缓存原始能力元数据，最多 8 份、5 分钟，保存时复用；缓存按端点、协议、凭据和自定义头的 SHA-256 指纹隔离，**不保存原始密钥或响应体**。过期、端点或凭据变化后重新探测。未保存的草稿不会被后台写入。
-
-## 数据优先级与原厂规格
-
-每个字段按下面的顺序取值，**越靠前越优先**，已有的值默认保留：
-
-1. **渠道 API 明确披露的字段**，例如 `context_length`、`max_output_tokens`、`top_provider.max_completion_tokens`。
-2. **原厂文档给出的规格**：内置核验记录，以及 models.dev 里带原厂文档域名的原厂记录。
-3. **权威第三方**：OpenRouter、LiteLLM、models.dev 三家，**至少两家一致**才采用。数值相差在 5% 以内算一致，取其中较小的值，所以不会因 65536 与 65535 这类微小差异而失败。同一来源内部若有离群值，以多数一致的一组为准；三家里两家一致就压过另一家。只有一家来源，或两组数值票数相同且差距明显时不填，并在检测报告里写明原因。第三方只提供上下文、最大输出和识图，推理等级只来自原厂记录。
-4. **API 参考值**：`max_input_tokens`、`max_tokens` 在各家网关里含义不一（可能只是输入上限或默认输出），只在上面都没有值时才用。
-
-内置了经核验的 DeepSeek-V4.1-Flash-1017：上下文 **1048576**、最大输出 **393216**、图片输入及明确披露的推理等级。来源为官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和[API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期为 2026-10-31。它可在公开来源不可用时使用，仅精确版本 ID 命中。
-
-models.dev 的原厂记录要求明确的原厂 provider、受信任的原厂文档域名，并排除 canonical ID 属于其他厂商的记录。**models.dev 是社区镜像，插件没有逐次抓取并验证每个官网字段。** 当前原厂域名规则覆盖 DeepSeek、OpenAI、Anthropic、Google、xAI、Mistral、Cohere、Moonshot 和智谱。
-
-**名称匹配**依次尝试：完整名称一致；去掉渠道前缀后一致；再放宽到「族匹配」，即忽略 `:free` 等变体后缀、日期快照（8 位日期）和分隔符差异（`3.5` 与 `3-5`）。族匹配在报告里标记 `≈`，且匹配到多个身份或原厂记录互相不一致时不填。`-1017` 这类短数字后缀属于模型身份，不会被去掉。渠道名称不规范时，可在设置页「模型名别名」里写 `渠道名 = 标准名`，每条精确匹配、不嵌套。
-
-**升级**：插件早先用较弱来源写入的值（回执仍与当前值一致），出现更强来源时会自动替换；你手填或改过的值没有匹配的回执，永远不动。可在设置里关闭「升级插件写入的值」。旧版本写入且没有回执的值无法与手填区分，按手填处理。
-
-官网规格表示原厂能力，**不保证第三方渠道开放相同上限**。来源里的 `channelVerified: false` 保留这一事实。不会发送推理请求来测容量。
-
-```yaml
-catalogNumericStrategy: official   # 默认：原厂 → 第三方分档（上述顺序）
-# catalogNumericStrategy: minimum   # 显式兼容模式：跨渠道最小值，不使用第三方分档
-# catalogNumericStrategy: consensus # 显式兼容模式：跨渠道数值一致才填
-thirdPartySources: true            # false 不访问 OpenRouter / LiteLLM
-upgradeWritten: true               # false 不升级插件早先写入的值
-modelAliases: { my-gateway-gpt: gpt-4o }
-catalogNumbers: true               # false 可关闭数值目录兜底
-catalogFallback: true              # false 关闭所有公开来源兜底，包括内置规格
-```
-
-**检测报告**（设置页）按渠道和模型列出每个字段的值、来源档位（渠道 API、原厂、第三方一致、API 参考值、你手动设置），没填的写明原因。「试查模型名」输入一个名字即可看到它会解析成什么及各第三方来源的取值，不改任何配置。「立即重新检测」会马上跑一轮。这些功能不联系你的渠道，也不显示地址、密钥或请求头。
-
-公开来源：models.dev 目录（可配地址）、`https://openrouter.ai/api/v1/models`、LiteLLM 的 `model_prices_and_context_window.json`（来自 GitHub raw）。后两个地址固定，请求不带凭据，也不含任何用户数据，响应有字节上限。缓存位于 `$DSH_HOME/cache/model-capability-detector/`：`catalog.json`（v5）和 `thirdparty.json`，默认有效期 7 天；刷新失败时同源的旧缓存可继续使用。
-
-每次配置成功写入后，来源记录保存到同目录的 `provenance.json`：字段和值、来源、记录时间，以及路由/模型/字段的 SHA-256 标识。不保存渠道地址、密钥或请求头。公开原厂模型名仍可能出现在来源元数据中；这些本地文件不应分享。
-## API 解析
-
-| 配置字段 | 常见 API 字段 |
-|---|---|
-| `contextWindow` | `contextWindow`、`context_window`、`context_length`、`max_model_len`、`limit.context`、`top_provider.context_length` |
-| `maxTokens` | `max_output_tokens`、`max_completion_tokens`、`limit.output`、`top_provider.max_completion_tokens` |
-| `input` | `architecture.input_modalities`、`modalities.input`、`input`、`supports_vision`、`vision` 等 |
-| `reasoningEfforts` | `reasoning.supported_efforts`、`reasoning_efforts`、`thinking_levels`、`parameters.reasoning_effort.enum` 等 |
-
-`max_input_tokens` 与 `max_tokens` 含义不明，只作为参考值（见上节）。
-
-支持 `{data:[...]}`、`{models:{id:{...}}}`、`{models:[...]}` 和顶层数组。模型映射的 key 是实际请求 ID，优先于条目内的 canonical id。等级会归一化到 pi-ai 词汇，例如 `none → off`、`mid → medium`、`extra high → xhigh`；API 等级仅含 `off` / `none` 时写入 `reasoningEfforts: false`，阻止目录补入推理能力。仅声明支持推理而未披露等级时不会凭空生成等级。`text->image` 等模态字符串只解析箭头左侧的输入部分，不把图片输出视为识图能力。
-
-OpenAI 兼容协议请求 `GET {baseURL}/models`；Anthropic 请求 `GET /v1/models?limit=1000`，接受根地址或带 `/v1` 的地址。自定义请求头会发送到渠道端点，API key 经 credentials 服务即时解析；显式设置但无法解析的引用不会退化成匿名请求。草稿只有在端点和协议与已保存渠道一致时才复用其凭据及请求头；换地址后需提供新凭据，显式输入的新密钥优先。API 请求拒绝重定向，避免自定义认证头被转发。响应在读取时按字节限制大小，超限即取消。
-
-## 日志与隐私
-
-**默认关闭全部插件日志**：`logging: false` 且 `logFile: ""` 时既不输出 Host 日志，也不创建诊断日志。公开目录缓存仍可能写入磁盘，与日志开关无关。
-
-调试时可以任选：
-
-```yaml
-logging: true                         # 仅启用 DSH Host 日志
-logFile: "logs/model-capability-detector.log"  # 显式路径启用 JSONL 文件及 Host 日志
-```
-
-文件路径为空则关闭文件日志；如需恢复完全静默，同时将 `logging` 设为 `false`。相对路径基于 DSH home；`~/` 也表示 DSH home，例如 `~/logs/detector.log`，不要重复加 `.dsh`。
-
-诊断记录事件、模型字段和决策，不记录密钥、请求头原始值或响应体；URL 的 userinfo、查询参数、fragment 以及常见凭据模式会被脱敏，错误对象不原样输出。日志超过 2 MiB 时保留一份 `.1` 历史。路由名、模型 ID 等仍可能属于你的部署信息，分享前应检查日志。默认忽略日志、环境文件和本地缓存，避免误提交到 GitHub。
-
-## 配置
-
-在 profile 的 `cordis.patch.yml` 中按行 id 覆盖配置：
-
-```yaml
-- id: dsh-model-capability-detector
-  name: dsh-model-capability-detector
-  config:
-    settingsNs: llm-pi-ai
-    enabled: true
-    overwrite: false
-    dryRun: false
-    timeoutMs: 15000
-    debounceMs: 800
-    startupDelayMs: 3000
-    maxResponseBytes: 4194304
-    catalogFallback: true
-    catalogUrl: https://models.dev/api.json
-    catalogTimeoutMs: 30000
-    catalogMaxBytes: 16777216
-    catalogTtlMs: 604800000
-    catalogNumbers: true
-    catalogNumericStrategy: official
-    thirdPartySources: true
-    upgradeWritten: true
-    modelAliases: {}
-    updateCheckOnStartup: false
-    discoveryTrigger: true
-    logging: false
-    logFile: ""
-```
-
-`dryRun: true` 仅计算计划，不写 profile；搭配 `logging: true` 或 `logFile` 查看计划。此选项仍允许把发现候选交给编辑草稿。
-
-从 1.1 升级时，已有 profile 显式设置的 `catalogNumbers: false` 或 `logFile` 会继续生效。想采用新的数值默认策略，需要修改自己的覆盖项；已填写的旧数值默认不会被覆盖。
-
-## 稳定性与验证
-
-配置变化会合并处理，后台 pass 串行运行。写入前重新核对配置版本，避免慢请求覆盖用户刚做的编辑；卸载会取消请求、清理定时器和内存缓存，已开始的探测也不会继续写配置。配置写入保留已有的 HMR 事务隔离方式。
-
-```sh
-node --test test/*.test.mjs
-```
-
-测试使用合成数据和假 fetch，不读取真实渠道或密钥。覆盖列表解析、目录冲突与缓存隔离、日志脱敏、获取列表后保存、卸载取消、并发编辑及 HMR 场景。该版本的实际模型页点击行为仍应在目标 DSH 版本中验证，离线测试不等同于浏览器验收。
+- 点击「获取可用模型」时，立刻为每个模型补全能力，并交给编辑草稿。这一步本身不保存配置。
+- 保存或修改渠道、重载配置、启动数秒后，在后台为空字段补值。
+- 只补空字段。你手填的值不会被改动。
+- 设置页提供检测报告，告诉你每个字段的值来自哪里，没填上的原因是什么。
 
 ## 安装
 
-本仓库支持直接从 GitHub 安装，无需先下载或生成 `.tgz` 压缩包。在 DSH「插件」页面的安装输入框中填写：
+在 DSH「插件」页的安装输入框填写：
 
 ```text
 https://github.com/BunnySakura/dsh-model-capability-detector
 ```
 
-也可以使用 pnpm 的 GitHub 简写：
+要固定版本，在地址末尾加 `#<标签>`，例如 `#1.4.0`，该标签必须已在 GitHub 上。也可以安装本地目录（绝对路径）或 `.tgz` 压缩包。安装影响当前 profile 的全部会话。
 
-```text
-github:BunnySakura/dsh-model-capability-detector
+需要 Node.js 20.3.0 或更高版本，以及满足包内声明的 DSH 版本。无需编译，也不执行安装脚本。
+
+## 设置
+
+打开「插件」页，进入本插件的详情页，所有选项都在页面里，保存后立即生效，只有「启动延迟」要等下次启动。点「重置」可让某个字段回到默认值。
+
+此外还可以在 profile 的 `cordis.patch.yml` 里为本插件写 `config`。取值优先级从低到高：内置默认值、`config`、设置页保存的值。设置页保存的值写在 `$DSH_HOME/model-capability-detector/settings.json`，只含下表的选项，不含密钥。
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 关闭后停止后台检测和模型页增强 |
+| `settingsNs` | `llm-pi-ai` | 保存渠道配置的设置命名空间 |
+| `discoveryTrigger` | `true` | 在「获取可用模型」时补全草稿 |
+| `overwrite` | `false` | 用新结果覆盖已有值 |
+| `dryRun` | `false` | 只计算不写入，配合日志查看计划 |
+| `timeoutMs` | `15000` | 单次渠道模型列表请求的超时 |
+| `maxResponseBytes` | `4194304` | 渠道响应大小上限，超过即取消 |
+| `debounceMs` | `800` | 合并短时间内连续的渠道改动 |
+| `startupDelayMs` | `3000` | 启动后多久做一次兜底扫描 |
+| `catalogFallback` | `true` | 允许使用公开来源，关闭后连内置规格也不用 |
+| `catalogNumbers` | `true` | 允许公开来源补上下文和最大输出 |
+| `catalogNumericStrategy` | `official` | `official` 为分档取值；`minimum`、`consensus` 为旧版兼容模式 |
+| `thirdPartySources` | `true` | 允许参考 OpenRouter 和 LiteLLM |
+| `upgradeWritten` | `true` | 出现更强来源时升级插件早先写入的值 |
+| `modelAliases` | `{}` | 模型名别名，格式见下文 |
+| `catalogUrl` | `https://models.dev/api.json` | models.dev 目录地址，只接受不含凭据的 http(s) |
+| `catalogTimeoutMs` | `30000` | 目录请求超时 |
+| `catalogMaxBytes` | `16777216` | 目录大小上限 |
+| `catalogTtlMs` | `604800000` | 公开来源缓存有效期，7 天 |
+| `logging` | `false` | 向 DSH 日志输出脱敏的诊断信息 |
+| `logFile` | `""` | 诊断日志路径，相对路径基于 DSH 主目录，非空时也启用日志；在设置页保存时须位于主目录内 |
+| `updateCheckOnStartup` | `false` | 启动约 10 秒后检查一次新版本 |
+
+写在 `cordis.patch.yml` 里的例子：
+
+```yaml
+- id: dsh-model-capability-detector
+  name: dsh-model-capability-detector
+  config:
+    timeoutMs: 20000
+    modelAliases:
+      my-gateway-gpt: gpt-4o
 ```
 
-Agent 使用 `plugin_manager` 的 `install_bundle` 操作，将上述地址作为 `target`。默认安装仓库默认分支；需要固定版本时，在地址末尾追加 `#<tag 或完整 commit SHA>`，对应的 tag 或 commit 必须已推送到 GitHub。安装需要能连接 GitHub，并满足包中声明的 DSH 版本要求。
+`config` 里的无效值会被忽略并记入日志，不会让插件加载失败。
 
-仓库根目录已包含 bundle 声明、补丁、JavaScript 入口、运行模块、语言资源和图标，无需额外编译或执行安装脚本。仍可通过插件管理器安装本地目录（使用绝对路径）或 `.tgz` 包。安装会影响当前 profile 的所有会话，请在希望启用该版本时执行。
+## 能力值从哪里来
 
-## 插件设置与更新
+每个字段按下面的顺序取值，越靠前越优先：
 
-打开 DSH「插件」页，进入本插件（`dsh-model-capability-detector`）的详情页，设置和在线更新都在页面中部的配置区。它只属于本插件，不增加全局标签，也不影响其它插件。
+1. **渠道 API**：渠道模型列表里含义明确的字段，如 `context_length`、`max_output_tokens`。
+2. **原厂文档**：内置的核验记录，以及 models.dev 里带原厂文档域名的原厂记录。
+3. **权威第三方**：OpenRouter、LiteLLM、models.dev 三家中至少两家一致才采用。数值相差 5% 以内算一致，取较小的值。
+4. **API 参考值**：`max_input_tokens` 和 `max_tokens` 在各家网关里含义不一，只在前面都没有值时才用。
 
-- **全部选项都能在 GUI 调整**：启用开关、模型设置命名空间、模型页增强、请求超时与响应上限、启动延迟、公开目录的开关/地址/超时/缓存、数值来源策略、覆盖与 dry-run、日志。
-- **保存即生效**：点击「保存设置」后立即应用并重新检查已保存渠道，无需重载插件。仅「启动延迟」要到下次启动才起作用。
-- **三层取值**：内置默认值 < `cordis.patch.yml` 中本插件的 `config` < GUI 保存的值。GUI 保存的值写入 `$DSH_HOME/model-capability-detector/settings.json`，只含上述选项，不含密钥。字段标记为「已在此设置」时可点「重置」，回到下一层的值。
-- **校验**：数值有范围，命名空间必须是小写字母/数字/连字符，目录 URL 只接受不含凭据的 http(s)，日志文件必须位于 DSH 主目录内。`cordis.patch.yml` 中的无效值会被忽略并记入 Host 日志，不会让插件加载失败。
-- **并发保护**：保存带 revision；别处同时改了文件时，本次保存被拒绝，页面载入最新值并保留提示。写入请求需要自定义请求头与 JSON 类型，并经 DSH 的登录与来源检查。
+推理等级只来自渠道 API 和原厂记录。原厂规格是模型本身的能力，**不保证第三方渠道开放同样的上限**。
 
-「启动时检查更新」默认关闭；开启后启动约 10 秒后检查一次。「检查更新」按钮随时可用，结果在当前进程缓存 24 小时。有新版本时，确认后页面直接调用 DSH 插件管理器 `installBundle` 安装固定仓库 `BunnySakura/dsh-model-capability-detector` 的该稳定版 tag；安装目标由 Host 生成，页面会再次校验。兼容性、安装脚本授权和最终结果由插件管理器决定：结果为「需要重启」时请重启 DSH；若提示需要批准安装脚本，请到「插件」页处理后重试。Agent 另有只读工具 `model_capability_detector_updates`，只能查询，不能安装。
+模型名对不上时，可以在设置页「模型名别名」里每行写一条 `渠道里的名字 = 标准模型名`。别名精确匹配，不嵌套。
+
+具体规则见 [数据来源与取值规则](docs/data-sources.md)。
+
+## 检测报告
+
+设置页的「检测报告」按渠道和模型列出每个字段的值和来源，没填的会写明原因：
+
+| 原因 | 含义 | 可以怎么办 |
+|---|---|---|
+| 没有原厂记录 | 找不到这个模型 | 配别名，或手填 |
+| 原厂记录未给出 | 记录里没有这一项 | 手填 |
+| 原厂记录不一致 | 不同原厂记录给出了不同的值 | 手填 |
+| 没有第三方数据 | OpenRouter 和 LiteLLM 都没收录 | 配别名，或手填 |
+| 只有一家第三方来源 | 凑不够两家 | 手填 |
+| 第三方来源不一致 | 数值相差明显且票数相同 | 手填 |
+| 公开来源已关闭 | `catalogFallback` 为 `false` | 打开该选项 |
+
+「试查模型名」输入一个名字，就能看到它会解析成什么，以及各第三方来源的取值，不改任何配置。「立即重新检测」会马上跑一轮。这三项都不联系你的渠道，也不显示地址、密钥或请求头。
+
+## 常见问题
+
+**为什么有的值我没改过却变了？** 插件早先用较弱来源写入的值，出现更强来源时会自动升级。你手填或改过的值不会动。在设置里关闭「升级插件写入的值」可禁止升级。
+
+**怎么让它覆盖已有值？** 打开 `overwrite`，或先清空那个字段再保存。
+
+**怎么完全不访问公开来源？** 把 `catalogFallback` 设为 `false`，只用渠道 API。只想不访问 OpenRouter 和 LiteLLM，把 `thirdPartySources` 设为 `false`。
+
+**「获取可用模型」没有反应或报错？** 插件通过包装 DSH 的 `llm.discoverModels` 方法接入，DSH 更新后可能不兼容。把 `discoveryTrigger` 设为 `false` 关掉这一接入，保存和重载时的后台补全不受影响。
+
+## 隐私与网络
+
+- **渠道请求**：向你配置的渠道发 `GET {baseURL}/models`（Anthropic 为 `/v1/models`）。API key 通过 DSH 的凭据服务即时取用，请求拒绝重定向。
+- **公开来源**：models.dev 目录、`openrouter.ai/api/v1/models`、GitHub 上 LiteLLM 的 `model_prices_and_context_window.json`。请求不带任何凭据和用户数据，响应有大小上限。
+- **更新检查**：默认关闭。开启后只访问本项目的 GitHub Releases。
+- **本地文件**，都在 `$DSH_HOME` 下，不含密钥、渠道地址和请求头：
+  - `cache/model-capability-detector/` 里是公开来源缓存和来源回执。回执用来判断某个值是不是插件写的，其中路由名和模型名已做哈希。
+  - `model-capability-detector/settings.json` 保存设置页的取值。
+- **日志**默认全部关闭。开启后，URL 里的账号、查询参数和常见凭据格式都会被脱敏。路由名和模型名仍可能暴露你的部署，分享日志前请先检查。
+
+## 更新
+
+设置页的「检查更新」会读取本项目 GitHub Releases 的最新稳定版。有新版本时，确认后由 DSH 插件管理器完成安装，兼容性检查、脚本授权和是否需要重启都由它决定。Agent 另有只读工具 `model_capability_detector_updates`，只能查询，不能安装。
+
+版本变化见 [更新记录](CHANGELOG.md)。
+
+## 文档
+
+- [设计与架构](docs/architecture.md)
+- [数据来源与取值规则](docs/data-sources.md)
+- [开发与发布](docs/development.md)
+
+## 许可证
+
+[MIT](LICENSE)

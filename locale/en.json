@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Model Capability Detector",
-    "description": "Collects context, output limits, image support and reasoning levels when fetching or saving third-party providers. API metadata comes first; public catalogs fill missing fields conservatively."
+    "description": "Fills in each model's context window, maximum output, image support and reasoning levels when you add or save a third-party provider. The provider API comes first, then original-provider documentation, then third-party sources that agree."
   }
 }
