@@ -7,12 +7,16 @@ window.__ModuleLoader__.load({
     const PACKAGE = 'dsh-model-capability-detector'
     const SETTINGS_URL = 'api/model-capability-detector/settings'
     const UPDATES_URL = 'api/model-capability-detector/updates'
+    const DETECTOR_URL = 'api/model-capability-detector/detector'
+    const FIELD_NAMES = ['contextWindow', 'maxTokens', 'input', 'reasoningEfforts']
+    const REASONS = ['no-original-record', 'not-disclosed-by-original', 'original-records-disagree', 'no-third-party-data', 'single-third-party-source', 'third-party-conflict', 'catalog-disabled', 'field-disabled', 'withheld', 'unknown', 'ambiguous']
+    const TIERS = ['api', 'official', 'third-party', 'hint', 'legacy', 'manual']
     const WRITE_HEADERS = { 'content-type': 'application/json', 'x-model-capability-detector': '1' }
     // The Host composes this target; the page still refuses anything else.
     const INSTALL_SPEC = /^git\+https:\/\/github\.com\/BunnySakura\/dsh-model-capability-detector\.git#v?\d+\.\d+\.\d+$/
     const FIELD_GROUPS = [
       { id: 'detection', fields: ['enabled', 'settingsNs', 'discoveryTrigger', 'timeoutMs', 'debounceMs', 'startupDelayMs', 'maxResponseBytes'] },
-      { id: 'fallback', fields: ['catalogFallback', 'catalogUrl', 'catalogTimeoutMs', 'catalogMaxBytes', 'catalogTtlMs', 'catalogNumbers', 'catalogNumericStrategy', 'overwrite', 'dryRun'] },
+      { id: 'fallback', fields: ['catalogFallback', 'catalogUrl', 'catalogTimeoutMs', 'catalogMaxBytes', 'catalogTtlMs', 'catalogNumbers', 'catalogNumericStrategy', 'thirdPartySources', 'upgradeWritten', 'modelAliases', 'overwrite', 'dryRun'] },
       { id: 'diagnostics', fields: ['logging', 'logFile'] },
     ]
     const LABELS = {
@@ -48,7 +52,17 @@ window.__ModuleLoader__.load({
         loggingLabel: 'Enable Host logs', loggingHint: 'Write sanitized diagnostic messages to the DSH logger.',
         logFileLabel: 'Diagnostic log file', logFileHint: 'Optional path inside DSH home (for example logs/detector.log). A non-empty path also enables Host logging.',
         updateCheckOnStartupLabel: 'Check for updates at startup', updateCheckOnStartupHint: 'Check the latest stable version shortly after startup. Off by default.',
-        strategyOfficial: 'Original-provider specifications (recommended)', strategyMinimum: 'Legacy: minimum across matching publishers', strategyConsensus: 'Legacy: accept numbers only when publishers agree',
+        thirdPartySourcesLabel: 'Use third-party sources', thirdPartySourcesHint: 'When original records have no value, use OpenRouter, LiteLLM and models.dev, but only values at least two of them agree on.',
+        upgradeWrittenLabel: 'Upgrade values this plugin wrote', upgradeWrittenHint: 'Replace a value the plugin filled from a weaker source once a stronger one appears. Values you typed are never changed.',
+        modelAliasesLabel: 'Model name aliases', modelAliasesHint: 'One per line: channel name = standard model name (for example my-gateway-gpt = gpt-4o). Used when looking up original and third-party records.',
+        report: 'Detection report', reportLoad: 'Show report', reportLoading: 'Loading…', reportEmpty: 'No providers with models are configured.', reportFailed: 'Could not build the report.', reportNote: 'Built from your saved providers and the public sources. No channel is contacted and no address or key is shown.',
+        rescan: 'Detect again now', rescanning: 'Detecting…', rescanDone: 'Detection finished. Show the report again to see the result.', rescanFailed: 'Detection did not run (the plugin may be disabled).',
+        lookup: 'Look up a model name', lookupPlaceholder: 'Model name as the channel lists it', lookupRun: 'Look up', lookupFailed: 'Look-up failed.', matched: 'Matched', unmatched: 'No original record', aliased: 'via alias', votes: 'Third-party sources',
+        fieldcontextWindow: 'Context window', fieldmaxTokens: 'Max output', fieldinput: 'Input', fieldreasoningEfforts: 'Reasoning', stateEmpty: 'Empty',
+        tierapi: 'Channel API', tierofficial: 'Original provider', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you',
+        'reasonno-original-record': 'No original-provider record', 'reasonnot-disclosed-by-original': 'Original record does not state it', 'reasonoriginal-records-disagree': 'Original records disagree',
+        'reasonno-third-party-data': 'No third-party data', 'reasonsingle-third-party-source': 'Only one third-party source', 'reasonthird-party-conflict': 'Third-party sources disagree',
+        'reasoncatalog-disabled': 'Public sources are off', 'reasonfield-disabled': 'This field is not filled from sources', reasonwithheld: 'Withheld: sources disagree', reasonunknown: 'Model not found', reasonambiguous: 'Name matches several models',        strategyOfficial: 'Original-provider specifications (recommended)', strategyMinimum: 'Legacy: minimum across matching publishers', strategyConsensus: 'Legacy: accept numbers only when publishers agree',
       },
       zh: {
         title: '模型能力检测器', summary: '集中配置渠道检测、原厂规格兜底、日志和更新。', on: '开启', off: '关闭',
@@ -82,7 +96,17 @@ window.__ModuleLoader__.load({
         loggingLabel: '启用 Host 日志', loggingHint: '向 DSH logger 输出已脱敏诊断信息。',
         logFileLabel: '诊断日志文件', logFileHint: '可选，DSH 主目录内的路径（如 logs/detector.log）。非空时也会启用 Host 日志。',
         updateCheckOnStartupLabel: '启动时检查更新', updateCheckOnStartupHint: '启动后不久检查最新稳定版，默认关闭。',
-        strategyOfficial: '原厂规格（推荐）', strategyMinimum: '旧版：匹配发布者中取最小值', strategyConsensus: '旧版：发布者数值一致时才填写',
+        thirdPartySourcesLabel: '使用第三方来源', thirdPartySourcesHint: '原厂记录没有值时，参考 OpenRouter、LiteLLM 和 models.dev，且只采用至少两家一致的值。',
+        upgradeWrittenLabel: '升级插件写入的值', upgradeWrittenHint: '插件曾用较弱来源填写的值，出现更强来源时自动替换。你手填的值永不改动。',
+        modelAliasesLabel: '模型名别名', modelAliasesHint: '每行一条：渠道里的名字 = 标准模型名（例如 my-gateway-gpt = gpt-4o）。查询原厂和第三方记录时使用。',
+        report: '检测报告', reportLoad: '查看报告', reportLoading: '加载中…', reportEmpty: '没有配置带模型的渠道。', reportFailed: '无法生成报告。', reportNote: '依据已保存的渠道和公开来源生成，不会联系渠道，也不显示地址或密钥。',
+        rescan: '立即重新检测', rescanning: '检测中…', rescanDone: '检测完成。再次点击“查看报告”可看到结果。', rescanFailed: '检测没有运行（插件可能已关闭）。',
+        lookup: '试查模型名', lookupPlaceholder: '渠道里列出的模型名', lookupRun: '查询', lookupFailed: '查询失败。', matched: '已匹配', unmatched: '没有原厂记录', aliased: '经别名', votes: '第三方来源',
+        fieldcontextWindow: '上下文窗口', fieldmaxTokens: '最大输出', fieldinput: '输入', fieldreasoningEfforts: '推理', stateEmpty: '空',
+        tierapi: '渠道 API', tierofficial: '原厂', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置',
+        'reasonno-original-record': '没有原厂记录', 'reasonnot-disclosed-by-original': '原厂记录未给出', 'reasonoriginal-records-disagree': '原厂记录不一致',
+        'reasonno-third-party-data': '没有第三方数据', 'reasonsingle-third-party-source': '只有一家第三方来源', 'reasonthird-party-conflict': '第三方来源不一致',
+        'reasoncatalog-disabled': '公开来源已关闭', 'reasonfield-disabled': '此字段不从来源填写', reasonwithheld: '来源不一致，未填', reasonunknown: '没找到该模型', reasonambiguous: '名称对应多个模型',        strategyOfficial: '原厂规格（推荐）', strategyMinimum: '旧版：匹配发布者中取最小值', strategyConsensus: '旧版：发布者数值一致时才填写',
       },
     }
     for (const dictionary of Object.values(LABELS)) {
@@ -136,6 +160,12 @@ window.__ModuleLoader__.load({
           const [checking, setChecking] = React.useState(false)
           const [installing, setInstalling] = React.useState(false)
           const [installMessage, setInstallMessage] = React.useState('')
+          const [aliasText, setAliasText] = React.useState(null)
+          const [report, setReport] = React.useState(null)
+          const [reportBusy, setReportBusy] = React.useState(false)
+          const [rescanState, setRescanState] = React.useState('')
+          const [lookupName, setLookupName] = React.useState('')
+          const [lookupResult, setLookupResult] = React.useState(null)
           const mounted = React.useRef(true)
 
           const load = async () => {
@@ -168,9 +198,10 @@ window.__ModuleLoader__.load({
           const reset = (key) => {
             setDraft((previous) => { const next = { ...previous }; delete next[key]; return next })
             setResets((previous) => ({ ...previous, [key]: true }))
+            if (key === 'modelAliases') setAliasText(null)
             setMessage('')
           }
-          const discard = () => { setDraft({}); setResets({}); setMessage('') }
+          const discard = () => { setDraft({}); setResets({}); setAliasText(null); setMessage('') }
           const valid = (key, value) => {
             const meta = state.fields?.[key]
             if (meta?.type === 'integer') return Number.isSafeInteger(value) && value >= meta.min && value <= meta.max
@@ -186,10 +217,10 @@ window.__ModuleLoader__.load({
             if (!alive || !mounted.current) return
             setBusy(false)
             if (outcome.status === 200 && outcome.body.ok) {
-              setState({ phase: 'ready', ...outcome.body }); setDraft({}); setResets({}); setMessage('saved'); return
+              setState({ phase: 'ready', ...outcome.body }); setDraft({}); setResets({}); setAliasText(null); setMessage('saved'); return
             }
             if (outcome.status === 409 && outcome.body.revision) {
-              setState({ phase: 'ready', ...outcome.body }); setDraft({}); setResets({}); setMessage('conflict'); return
+              setState({ phase: 'ready', ...outcome.body }); setDraft({}); setResets({}); setAliasText(null); setMessage('conflict'); return
             }
             setMessage(outcome.status === 400 ? 'refused' : 'saveFailed')
             if (outcome.body.errors) setMessage(`refused:${outcome.body.errors.join(', ')}`)
@@ -221,6 +252,46 @@ window.__ModuleLoader__.load({
             else if (outcome.error?.code === 'already-installed') finishInstall('installApplied')
             else finishInstall('installFailed', outcome.error?.diagnostic ?? outcome.error?.code ?? outcome.application ?? 'unknown')
           }
+          const loadReport = async () => {
+            setReportBusy(true)
+            try {
+              const { body } = await request(DETECTOR_URL)
+              if (alive && mounted.current) setReport(body.ok ? body : { failed: true })
+            } catch { if (alive && mounted.current) setReport({ failed: true }) }
+            finally { if (alive && mounted.current) setReportBusy(false) }
+          }
+          const rescan = async () => {
+            setRescanState('rescanning')
+            try {
+              const { body } = await request(DETECTOR_URL, { action: 'rescan' })
+              if (alive && mounted.current) setRescanState(body.ok ? 'rescanDone' : 'rescanFailed')
+            } catch { if (alive && mounted.current) setRescanState('rescanFailed') }
+          }
+          const runLookup = async () => {
+            if (!lookupName.trim()) return
+            try {
+              const { body } = await request(DETECTOR_URL, { action: 'lookup', model: lookupName })
+              if (alive && mounted.current) setLookupResult(body.ok ? body : { failed: true })
+            } catch { if (alive && mounted.current) setLookupResult({ failed: true }) }
+          }
+          const aliasLines = (aliases) => Object.entries(aliases ?? {}).map(([from, to]) => `${from} = ${to}`).join('\n')
+          const parseAliases = (text) => {
+            const result = {}
+            for (const line of text.split(/\r?\n/)) {
+              const at = line.indexOf('=')
+              if (at < 0) continue
+              const from = line.slice(0, at).trim(); const to = line.slice(at + 1).trim()
+              if (from && to) result[from] = to
+            }
+            return result
+          }
+          const word = (key, fallback) => { const text = t(key); return text === key ? fallback ?? key : text }
+          const cell = (info) => {
+            if (info.state === 'empty') return `${t('stateEmpty')} · ${word(`reason${info.reason}`, info.reason ?? '')}`
+            const value = Array.isArray(info.value) ? info.value.join('+') : typeof info.value === 'object' && info.value !== null ? Object.keys(info.value).join('/') : info.value === false ? t('off') : String(info.value)
+            const tier = info.tier ? word(`tier${info.tier}`, info.tier) : ''
+            return `${value}${tier ? ` · ${tier}` : ''}${info.match === 'family' ? ' ≈' : ''}`
+          }
           const describe = (code) => {
             const [key, detail] = [code.split(':')[0], code.includes(':') ? code.slice(code.indexOf(':') + 1) : '']
             return detail ? `${t(key === 'refused' ? 'refused' : key)}${detail}` : t(key)
@@ -249,6 +320,7 @@ window.__ModuleLoader__.load({
             const meta = state.fields?.[key]
             if (meta?.type === 'boolean') return toggleControl(key)
             if (meta?.type === 'enum') return selectControl(key, meta)
+            if (meta?.type === 'aliases') return fieldFrame(key, h('textarea', { 'data-config-key': key, rows: 4, value: aliasText ?? aliasLines(shown[key]), disabled: !editing || busy, style: { ...inputStyle, fontFamily: 'monospace' }, 'aria-label': t(`Label`), onChange: (event) => { setAliasText(event.currentTarget.value); edit(key, parseAliases(event.currentTarget.value)) } }))
             if (meta?.type === 'integer') return textControl(key, 'number', meta)
             return textControl(key, meta?.type === 'url' ? 'url' : 'text', meta)
           }
@@ -261,6 +333,30 @@ window.__ModuleLoader__.load({
             ...(ready ? FIELD_GROUPS.map((group) => h('section', { key: group.id, style: { marginTop: 20 } },
               h('h4', { style: { margin: '0 0 4px', paddingBottom: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', fontSize: 14 } }, t(group.id)),
               ...group.fields.map(control))) : []),
+            h('section', { style: { marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--dsw-alias-border-l2)' } },
+              h('h4', { style: { margin: '0 0 8px', fontSize: 14 } }, t('report')),
+              h('p', { style: { margin: '0 0 8px', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('reportNote')),
+              h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
+                h('button', { type: 'button', disabled: reportBusy, onClick: loadReport, style: secondaryButton }, t(reportBusy ? 'reportLoading' : 'reportLoad')),
+                h('button', { type: 'button', disabled: rescanState === 'rescanning', onClick: rescan, style: secondaryButton }, t(rescanState === 'rescanning' ? 'rescanning' : 'rescan'))),
+              rescanState && rescanState !== 'rescanning' ? h('p', { role: 'status' }, t(rescanState)) : null,
+              report?.failed ? h('p', { role: 'alert' }, t('reportFailed')) : null,
+              report && !report.failed && report.routes.every((route) => route.models.length === 0) ? h('p', {}, t('reportEmpty')) : null,
+              ...(report && !report.failed ? report.routes.map((route) => h('div', { key: route.route, style: { marginTop: 8 } },
+                h('div', { style: { fontWeight: 500 } }, route.route),
+                ...route.models.map((model) => h('div', { key: model.id, style: { padding: '6px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+                  h('div', {}, model.id, model.matched === true || typeof model.matched === 'string' ? ` · ${t('matched')}` : model.matched === false ? ` · ${t('unmatched')}` : ''),
+                  ...FIELD_NAMES.map((field) => h('div', { key: field, style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t(`field${field}`)}: ${cell(model.fields[field])}`)))))) : []),
+              h('div', { style: { marginTop: 12 } },
+                h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('lookup')),
+                h('div', { style: { display: 'flex', gap: 8 } },
+                  h('input', { type: 'text', value: lookupName, placeholder: t('lookupPlaceholder'), 'aria-label': t('lookup'), style: inputStyle, onChange: (event) => setLookupName(event.currentTarget.value) }),
+                  h('button', { type: 'button', onClick: runLookup, style: secondaryButton }, t('lookupRun'))),
+                lookupResult?.failed ? h('p', { role: 'alert' }, t('lookupFailed')) : null,
+                lookupResult && !lookupResult.failed ? h('div', { style: { marginTop: 8 } },
+                  h('div', {}, `${lookupResult.model} · ${lookupResult.status === 'resolved' ? t('matched') : word(`reason${lookupResult.status}`, lookupResult.status)}${lookupResult.aliased ? ` · ${t('aliased')}` : ''}`),
+                  ...FIELD_NAMES.map((field) => h('div', { key: field, style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t(`field${field}`)}: ${cell(lookupResult.fields[field])}`)),
+                  Object.keys(lookupResult.votes ?? {}).length > 0 ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t('votes')}: ${Object.entries(lookupResult.votes).map(([name, vote]) => `${name} ${vote.context ?? '-'}/${vote.output ?? '-'}`).join(' · ')}`) : null) : null)),
             h('section', { style: { marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--dsw-alias-border-l2)' } },
               h('h4', { style: { margin: '0 0 8px', fontSize: 14 } }, t('updates')),
               ready ? control('updateCheckOnStartup') : null,

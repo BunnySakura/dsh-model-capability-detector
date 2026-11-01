@@ -194,3 +194,72 @@ test('the page refuses an install target outside the fixed repository', async ()
     assert.ok(flatten(render()).some((node) => node.children?.includes('installRefused')))
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('the settings page edits aliases and shows the detection report and look-up', async () => {
+  let definition, Component
+  let cursor = 0
+  const hooks = [], effects = [], posts = []
+  const fields = { modelAliases: { type: 'aliases' }, thirdPartySources: { type: 'boolean' } }
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }] },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const originalFetch = globalThis.fetch
+  const field = { state: 'set', value: 128000, tier: 'official' }
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/settings')) {
+      if (init.method === 'POST') posts.push(JSON.parse(init.body))
+      return Response.json({ ok: true, revision: 'r', writable: true, defaults: {}, overrides: {}, effective: { modelAliases: { 'my-gw': 'gpt-4o' }, thirdPartySources: true }, fields })
+    }
+    if (path.endsWith('/detector')) {
+      if (init.method === 'POST') {
+        const body = JSON.parse(init.body)
+        return Response.json({ ok: true, model: body.model, status: 'resolved', fields: { contextWindow: field, maxTokens: { state: 'empty', reason: 'third-party-conflict' }, input: field, reasoningEfforts: field }, votes: { openrouter: { context: 128000, output: 16384 } } })
+      }
+      return Response.json({ ok: true, routes: [{ route: 'r1', models: [{ id: 'gpt-4o', matched: true, fields: { contextWindow: field, maxTokens: { state: 'empty', reason: 'third-party-conflict' }, input: field, reasoningEfforts: field } }] }] })
+    }
+    return Response.json({ status: 'unchecked' })
+  }
+  const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+  const text = (nodes) => nodes.flatMap((node) => (node.children ?? []).filter((child) => typeof child === 'string')).join('\n')
+  try {
+    runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+      window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+      document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+    })
+    definition.factory(() => React).apply({
+      effect: () => {}, locale: { register() {}, bind: () => (key) => key }, get: () => undefined,
+      slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component } },
+    })
+    const page = Component({ view: 'page' })
+    const render = () => { cursor = 0; return page.type(page.props) }
+    render(); await tick()
+    let nodes = flatten(render())
+    const aliases = nodes.find((node) => node.props?.['data-config-key'] === 'modelAliases')
+    assert.equal(aliases.props.value, 'my-gw = gpt-4o')
+    aliases.props.onChange({ currentTarget: { value: 'my-gw = gpt-4o\nother = claude-sonnet-4-5\nbroken line' } })
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('save')).props.onClick()
+    await tick()
+    assert.deepEqual(JSON.parse(JSON.stringify(posts[0].set)), { modelAliases: { 'my-gw': 'gpt-4o', other: 'claude-sonnet-4-5' } })
+
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('reportLoad')).props.onClick()
+    await tick()
+    nodes = flatten(render())
+    const shown = text(nodes)
+    assert.match(shown, /gpt-4o/)
+    assert.match(shown, /128000 · official/, 'a key missing from the locale falls back to the raw code')
+    assert.match(shown, /stateEmpty · third-party-conflict/)
+
+    nodes.find((node) => node.props?.['aria-label'] === 'lookup').props.onChange({ currentTarget: { value: 'my-gw' } })
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('lookupRun')).props.onClick()
+    await tick()
+    assert.match(text(flatten(render())), /openrouter 128000\/16384/)
+  } finally { globalThis.fetch = originalFetch }
+})

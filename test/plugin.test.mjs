@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Host-side behaviour checks for `apply()`, driven by a fake Context.
  *
  * Run: node --test test/plugin.test.mjs
@@ -9,12 +9,13 @@
 
 import assert from 'node:assert/strict'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { apply, DEFAULT_CONFIG } from '../index.js'
+import { provenanceKey } from '../lib/provenance.js'
 
 /** A controllable stand-in for the Host settings row this plugin writes. */
 function createHarness(options = {}) {
@@ -585,4 +586,98 @@ test('an explicit model refresh invalidates a previously inspected unchanged con
     assert.equal(state.writes.length, 2)
     assert.deepEqual(state.providers['example-route'].models[0].reasoningEfforts, { low: 'low', high: 'high' })
   } finally { cleanups.forEach((fn) => fn()); globalThis.fetch = original }
+})
+
+const DETECTOR = '/api/model-capability-detector/detector'
+const call = (routes, input) => {
+  const route = routes.get(DETECTOR)
+  return route.fetch(new Request('https://local.test/d', input === undefined ? {} : {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-model-capability-detector': '1' }, body: JSON.stringify(input),
+  }))
+}
+
+test('the detection report names source and reason per field and never exposes the endpoint', async () => {
+  const routes = new Map()
+  const { ctx } = createHarness({ routes })
+  apply(ctx, { startupDelayMs: 3600000, catalogFallback: false })
+  const response = await call(routes)
+  const text = await response.text()
+  assert.equal(text.includes('gateway.test'), false, 'no address in the report')
+  assert.equal(text.includes('TEST_API_KEY'), false)
+  const report = JSON.parse(text)
+  assert.equal(report.ok, true)
+  const models = report.routes[0].models
+  assert.deepEqual(models[0].fields.contextWindow, { state: 'empty', reason: 'catalog-disabled' })
+  assert.deepEqual(models[1].fields.contextWindow, { state: 'set', value: 1234, tier: 'manual' })
+})
+
+test('look-up resolves a pinned model, honours aliases and rejects bad input', async () => {
+  const routes = new Map()
+  const { ctx } = createHarness({ routes })
+  apply(ctx, { startupDelayMs: 3600000, catalogFallback: false, modelAliases: { 'my-gw': 'deepseek-v4.1-flash-1017' } })
+  const pinned = await (await call(routes, { action: 'lookup', model: 'deepseek-v4.1-flash-1017' })).json()
+  assert.equal(pinned.status, 'resolved')
+  assert.equal(pinned.fields.contextWindow.value, 1048576)
+  assert.equal(pinned.fields.contextWindow.tier, 'official')
+  const aliased = await (await call(routes, { action: 'lookup', model: 'my-gw' })).json()
+  assert.equal(aliased.aliased, true)
+  assert.equal(aliased.fields.maxTokens.value, 393216)
+  const missing = await (await call(routes, { action: 'lookup', model: 'no-such-model' })).json()
+  assert.equal(missing.fields.contextWindow.state, 'empty')
+  assert.equal((await call(routes, { action: 'lookup', model: '' })).status, 400)
+  assert.equal((await call(routes, { action: 'nope' })).status, 400)
+})
+
+test('rescan runs a pass on demand and reports a disabled plugin', async () => {
+  const stub = stubFetch(listing)
+  const routes = new Map()
+  const { ctx, state } = createHarness({ routes })
+  try {
+    apply(ctx, { startupDelayMs: 3600000, debounceMs: 0, catalogFallback: false })
+    assert.equal((await (await call(routes, { action: 'rescan' })).json()).ok, true)
+    assert.equal(state.writes.length, 1)
+    await call(routes, { action: 'rescan' })
+    assert.equal(state.writes.length, 1, 'a second pass with nothing new writes nothing')
+  } finally { stub.restore() }
+  const disabled = new Map()
+  apply(createHarness({ routes: disabled }).ctx, { enabled: false })
+  assert.deepEqual(await (await call(disabled, { action: 'rescan' })).json(), { ok: false, reason: 'disabled' })
+})
+
+test('a value the plugin wrote from a weak source is upgraded; one you typed is not', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-upgrade-'))
+  const stub = stubFetch(listing)
+  const receipt = (value) => ({ value, source: { kind: 'api-hint' }, at: new Date().toISOString() })
+  try {
+    await mkdir(join(home, 'cache', 'model-capability-detector'), { recursive: true })
+    await writeFile(join(home, 'cache', 'model-capability-detector', 'provenance.json'), JSON.stringify({
+      version: 1, receipts: { [provenanceKey('example-route', 'alpha', 'contextWindow')]: receipt(1000) },
+    }))
+    const providers = { 'example-route': { baseURL: 'https://gateway.test/v1', api: 'openai-responses', apiKeyEnv: 'TEST_API_KEY', models: [
+      { id: 'alpha', contextWindow: 1000 }, // written by the plugin earlier
+      { id: 'beta', contextWindow: 1000 }, // typed by the user: no receipt
+    ] } }
+    const { ctx, state } = createHarness({ homePath: home, providers })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, catalogFallback: false })
+    await settle()
+    const [alpha, beta] = state.providers['example-route'].models
+    assert.equal(alpha.contextWindow, 200000, 'channel API replaces the weaker hint-based value')
+    assert.equal(beta.contextWindow, 1000, 'a hand-typed value is left alone')
+  } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
+})
+
+test('turning upgrades off leaves earlier values alone', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-noupgrade-'))
+  const stub = stubFetch(listing)
+  try {
+    await mkdir(join(home, 'cache', 'model-capability-detector'), { recursive: true })
+    await writeFile(join(home, 'cache', 'model-capability-detector', 'provenance.json'), JSON.stringify({
+      version: 1, receipts: { [provenanceKey('example-route', 'alpha', 'contextWindow')]: { value: 1000, source: { kind: 'api-hint' }, at: new Date().toISOString() } },
+    }))
+    const providers = { 'example-route': { baseURL: 'https://gateway.test/v1', api: 'openai-responses', apiKeyEnv: 'TEST_API_KEY', models: [{ id: 'alpha', contextWindow: 1000 }] } }
+    const { ctx, state } = createHarness({ homePath: home, providers })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, catalogFallback: false, upgradeWritten: false })
+    await settle()
+    assert.equal(state.providers['example-route'].models[0].contextWindow, 1000)
+  } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
 })

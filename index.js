@@ -8,12 +8,15 @@ import { createDiagnostics, sanitizeMessage } from './lib/diagnostics.js'
 import { configured, listingHeaders, listingUrl, readListing } from './lib/detect.js'
 import { attachDiscovery, createDiscoveryCache, waitWithSignal } from './lib/discovery.js'
 import { readJsonResponse } from './lib/http.js'
+import { applyAlias } from './lib/names.js'
 import { createProvenance } from './lib/provenance.js'
 import { DEFAULTS, createSettingsStore } from './lib/settings.js'
+import { loadThirdParty } from './lib/sources.js'
+import { rankOf, resolveTiered } from './lib/tiers.js'
 import { registerUpdates } from './lib/update-host.js'
 import {
   SAFE_CATALOG_FIELDS, RISKY_CATALOG_FIELDS, describeChanges, describeFallbacks,
-  hasBlanks, mergeDetected, sameProviders,
+  FIELDS, UPGRADE_BELOW_RANK, hasBlanks, hasUpgradable, mergeDetected, sameProviders,
 } from './lib/plan.js'
 
 export const name = 'model-capability-detector'
@@ -59,8 +62,9 @@ export function apply(ctx, rawConfig) {
   // Every option is read through this binding at the moment it is used, so a
   // change saved from the GUI applies without reloading the plugin.
   let config = settingsStore.effective()
+  const detectorApi = {}
   if (typeof ctx.inject === 'function' || ctx.get('connection') || ctx.get('tools')) {
-    registerUpdates(ctx, { config: () => config, settings: settingsStore })
+    registerUpdates(ctx, { config: () => config, settings: settingsStore, detector: detectorApi })
   }
   let disposed = false
   let timer
@@ -71,6 +75,9 @@ export function apply(ctx, rawConfig) {
   let catalog
   let catalogLoadedAt = 0
   let catalogPending
+  let thirdParty
+  let thirdPartyLoadedAt = 0
+  let thirdPartyPending
   const lifetime = new AbortController()
   const discoveryCache = createDiscoveryCache()
   const provenanceStore = createProvenance(home)
@@ -147,8 +154,30 @@ export function apply(ctx, rawConfig) {
     })()
     try { return await catalogPending } finally { catalogPending = undefined }
   }
-  const resolveCatalog = (lookup, id) => {
-    const answer = resolveName(lookup, id, { numericStrategy: config.catalogNumericStrategy })
+  const ensureThirdParty = async () => {
+    if (disposed || config.catalogFallback === false || config.thirdPartySources === false
+      || config.catalogNumericStrategy !== 'official' || typeof homePath !== 'function') return undefined
+    if (thirdParty !== undefined && Date.now() - thirdPartyLoadedAt < config.catalogTtlMs) return thirdParty
+    if (thirdPartyPending !== undefined) return thirdPartyPending
+    thirdPartyPending = (async () => {
+      const loaded = await loadThirdParty({
+        homePath: homePath(), ttlMs: config.catalogTtlMs, timeoutMs: config.catalogTimeoutMs, signal: lifetime.signal,
+      })
+      if (disposed) return undefined
+      note('third-party-loaded', { status: loaded.status })
+      if (Object.keys(loaded.lookups).length === 0) return undefined
+      thirdParty = loaded.lookups
+      // Retry a source that only answered from stale cache on a later pass.
+      thirdPartyLoadedAt = Object.values(loaded.status).every((state) => state === 'network' || state === 'cache') ? Date.now() : 0
+      return thirdParty
+    })()
+    try { return await thirdPartyPending } finally { thirdPartyPending = undefined }
+  }
+  const answerFor = (lookup, third, id) => (config.catalogNumericStrategy === 'official'
+    ? resolveTiered(lookup, third, id, { aliases: config.modelAliases })
+    : resolveName(lookup, applyAlias(config.modelAliases, id), { numericStrategy: config.catalogNumericStrategy }))
+  const resolveCatalog = (lookup, third, id) => {
+    const answer = answerFor(lookup, third, id)
     if (answer.status !== 'resolved') note('catalog-miss', { model: id, status: answer.status })
     else {
       if (Object.keys(answer.withheld).length > 0) note('catalog-withheld', { model: id, withheld: answer.withheld })
@@ -156,18 +185,45 @@ export function apply(ctx, rawConfig) {
     }
     return answer
   }
-  // Only download a catalog if at least one eligible field is still missing
-  // after considering the endpoint. API-complete listings need no public I/O.
-  const needsCatalog = (providers, detected) => Object.entries(providers).some(([route, profile]) =>
-    Array.isArray(profile?.models) && profile.models.some((model) =>
-      typeof model?.id === 'string' && catalogFields.some((field) =>
-        (config.overwrite === true || !configured(model[field])) && detected.get(route)?.get(model.id)?.[field] === undefined)))
-  const enrich = async (providers, detected) => {
-    const lookup = needsCatalog(providers, detected) ? await ensureCatalog() : undefined
+  const sameValue = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+  const noReceipts = () => undefined
+  /** Fields a catalog could still improve: blank, overwritten, or written earlier by a weaker source. */
+  const wantedFor = (providers, detected, receiptFor) => {
+    const wanted = []
+    for (const [route, profile] of Object.entries(providers)) {
+      if (!Array.isArray(profile?.models)) continue
+      for (const model of profile.models) {
+        if (typeof model?.id !== 'string') continue
+        const fields = catalogFields.filter((field) => {
+          if (detected.get(route)?.get(model.id)?.[field] !== undefined) return false
+          if (config.overwrite === true || !configured(model[field])) return true
+          if (config.upgradeWritten === false) return false
+          const receipt = receiptFor(route, model.id, field)
+          return receipt !== undefined && sameValue(receipt.value, model[field]) && rankOf(receipt.source) < UPGRADE_BELOW_RANK
+        })
+        if (fields.length > 0) wanted.push({ route, id: model.id, fields })
+      }
+    }
+    return wanted
+  }
+  const enrich = async (providers, detected, receiptFor = noReceipts) => {
+    const wanted = wantedFor(providers, detected, receiptFor)
+    const lookup = wanted.length > 0 ? await ensureCatalog() : undefined
+    let third
+    if (wanted.length > 0 && config.catalogNumericStrategy === 'official' && config.thirdPartySources !== false) {
+      // Third-party tables are fetched only when original records leave a wanted field open.
+      const base = lookup ?? toLookup(undefined)
+      const open = wanted.some(({ id, fields }) => {
+        const answer = resolveTiered(base, undefined, id, { aliases: config.modelAliases })
+        return fields.some((field) => answer.safe[field] === undefined && answer.withheld[field] === undefined)
+      })
+      if (open) third = await ensureThirdParty()
+    }
     return mergeDetected(providers, detected, config.overwrite === true, {
       resolve: config.catalogFallback === false ? undefined : lookup === undefined && config.catalogNumericStrategy !== 'official'
-        ? undefined : (id) => resolveCatalog(lookup ?? toLookup(undefined), id),
+        ? undefined : (id) => resolveCatalog(lookup ?? toLookup(undefined), third, id),
       allowedFields: catalogFields,
+      receiptFor, upgrade: config.upgradeWritten !== false,
     })
   }
   const targetFor = async (profile) => ({
@@ -237,12 +293,15 @@ export function apply(ctx, rawConfig) {
     if (current === undefined) return
     const signature = JSON.stringify(current.providers)
     if (lastInspected === signature) return
-    if (!hasBlanks(current.providers, config.overwrite === true)) { lastInspected = signature; return }
+    const receiptFor = await provenanceStore.load()
+    const improvable = (providers) => hasBlanks(providers, config.overwrite === true)
+      || (config.upgradeWritten !== false && hasUpgradable(providers, receiptFor))
+    if (!improvable(current.providers)) { lastInspected = signature; return }
     const detected = new Map()
     let failed = false
     for (const [route, profile] of Object.entries(current.providers)) {
       if (disposed) return
-      if (!Array.isArray(profile?.models) || !hasBlanks({ [route]: profile }, config.overwrite === true)) continue
+      if (!Array.isArray(profile?.models) || !improvable({ [route]: profile })) continue
       if (typeof profile.baseURL !== 'string' || !profile.baseURL.trim()) continue
       try {
         const target = await targetFor(profile)
@@ -259,9 +318,11 @@ export function apply(ctx, rawConfig) {
         logger.warn('model-capability-detector: route "%s" failed: %s', route, sanitizeMessage(error))
       }
     }
-    const { providers, changes, fallbacks, provenance } = await enrich(current.providers, detected)
+    const { providers, changes, fallbacks, provenance, upgrades } = await enrich(current.providers, detected, receiptFor)
     if (disposed) return
     if (changes.length === 0 || sameProviders(providers, current.providers)) {
+      // Better evidence for an unchanged value only refreshes its receipt.
+      if (provenance.length > 0 && config.dryRun !== true) await provenanceStore.record(provenance)
       if (!failed) lastInspected = signature
       return
     }
@@ -284,7 +345,7 @@ export function apply(ctx, rawConfig) {
     try {
       await outsideTransaction(() => ctx.settings.update(config.settingsNs, { providers }, current.revision))
       await provenanceStore.record(provenance)
-      note('pass-written', { changes: changes.length, fallbacks: fallbacks.length })
+      note('pass-written', { changes: changes.length, fallbacks: fallbacks.length, upgrades })
       logger.info('model-capability-detector: detected capabilities:\n%s\n%s', report, viaCatalog)
     } catch (error) {
       lastInspected = undefined
@@ -314,6 +375,70 @@ export function apply(ctx, rawConfig) {
     timer = setTimeout(() => { timer = undefined; kick(reason) }, config.debounceMs)
     timer.unref?.()
   }
+  // Read-only views for the settings page. None of them contacts a channel or
+  // exposes an address, key or header.
+  const TIER = {
+    'channel-api': 'api', 'official-verified': 'official', 'original-provider-mirror': 'official',
+    'third-party-consensus': 'third-party', 'api-hint': 'hint', 'legacy-catalog': 'legacy',
+  }
+  const tierOf = (source) => TIER[source?.kind] ?? 'unknown'
+  const sourcesFor = async (needThird) => {
+    const lookup = config.catalogFallback === false ? undefined : await ensureCatalog()
+    const third = needThird ? await ensureThirdParty() : undefined
+    return { lookup: lookup ?? toLookup(undefined), third }
+  }
+  const summarize = (answer, field) => (answer.safe?.[field] !== undefined
+    ? { state: 'found', value: answer.safe[field], tier: tierOf(answer.sources?.[field] ?? { kind: 'legacy-catalog' }), match: answer.sources?.[field]?.match ?? answer.match }
+    : { state: 'empty', reason: answer.reasons?.[field] ?? (answer.withheld?.[field] !== undefined ? 'withheld' : answer.reason ?? answer.status) })
+  const buildReport = async () => {
+    const current = readProfile()
+    if (current === undefined) return { ok: false, reason: 'settings-unavailable' }
+    const receiptFor = await provenanceStore.load()
+    const blank = Object.values(current.providers).some((profile) => Array.isArray(profile?.models)
+      && profile.models.some((model) => typeof model?.id === 'string' && FIELDS.some((field) => !configured(model[field]))))
+    const { lookup, third } = blank ? await sourcesFor(config.thirdPartySources !== false) : { lookup: toLookup(undefined), third: undefined }
+    const routes = []
+    for (const [route, profile] of Object.entries(current.providers)) {
+      if (!Array.isArray(profile?.models)) continue
+      const models = []
+      for (const model of profile.models) {
+        if (typeof model?.id !== 'string') continue
+        const answer = FIELDS.some((field) => !configured(model[field])) ? answerFor(lookup, third, model.id) : undefined
+        const fields = {}
+        for (const field of FIELDS) {
+          if (configured(model[field])) {
+            const receipt = receiptFor(route, model.id, field)
+            const written = receipt !== undefined && sameValue(receipt.value, model[field])
+            fields[field] = { state: 'set', value: model[field], tier: written ? tierOf(receipt.source) : 'manual' }
+          } else if (config.catalogFallback === false) fields[field] = { state: 'empty', reason: 'catalog-disabled' }
+          else if (!catalogFields.includes(field)) fields[field] = { state: 'empty', reason: 'field-disabled' }
+          else fields[field] = summarize(answer, field)
+        }
+        models.push({ id: model.id, matched: answer?.status === 'resolved' ? answer.identity ?? true : answer === undefined ? undefined : false, fields })
+      }
+      routes.push({ route, models })
+    }
+    return { ok: true, generatedAt: new Date().toISOString(), strategy: config.catalogNumericStrategy, routes }
+  }
+  const lookupModel = async (model) => {
+    if (typeof model !== 'string' || model.trim().length === 0 || model.length > 200) return { ok: false, reason: 'invalid-model' }
+    const { lookup, third } = await sourcesFor(config.thirdPartySources !== false)
+    const answer = answerFor(lookup, third, model.trim())
+    const fields = Object.fromEntries(FIELDS.map((field) => [field, summarize(answer, field)]))
+    return {
+      ok: true, model: model.trim(), status: answer.status, match: answer.match, aliased: answer.aliased === true,
+      identity: answer.identity, reason: answer.status === 'resolved' ? undefined : answer.reason, fields, votes: answer.votes ?? {},
+    }
+  }
+  const rescan = async () => {
+    if (disposed || config.enabled === false) return { ok: false, reason: 'disabled' }
+    lastInspected = undefined
+    try { await outsideTransaction(() => pump('manual-rescan')) } catch { return { ok: false, reason: 'failed' } }
+    return { ok: true }
+  }
+  detectorApi.report = buildReport
+  detectorApi.lookup = lookupModel
+  detectorApi.rescan = rescan
   ctx.effect(() => () => {
     disposed = true
     clearTimeout(timer)
@@ -335,7 +460,7 @@ export function apply(ctx, rawConfig) {
     }
     lastInspected = undefined
     syncBridge()
-    note('settings-changed', { changed: Object.keys(next).filter((key) => next[key] !== previous[key]) })
+    note('settings-changed', { changed: Object.keys(next).filter((key) => JSON.stringify(next[key]) !== JSON.stringify(previous[key])) })
     schedule('settings-changed')
   }))
   ctx.on('settings/document-updated', (ns) => { if (ns === config.settingsNs) schedule('settings-document-updated') })

@@ -24,9 +24,15 @@ test('matches original canonical ids and preserves dated and punctuation variant
   const source = lookup(document())
   assert.equal(resolveName(source, 'deepseek/deepseek-v4.1-flash-1017').safe.contextWindow, 1048576)
   assert.equal(resolveName(source, 'gateway/deepseek-v4.1-flash-1017').safe.contextWindow, 1048576)
-  for (const id of ['deepseek-v4.1-flash', 'deepseek-v4.1-flash-0423', 'dsv4.1flash', 'deepseek_v4_1_flash_1017']) {
+  // Different snapshots or products never borrow this record.
+  for (const id of ['deepseek-v4.1-flash', 'deepseek-v4.1-flash-0423', 'dsv4.1flash']) {
     assert.equal(resolveName(source, id).status, 'unknown', id)
   }
+  // A difference in separators only is the same model, reported as a family match.
+  const spaced = resolveName(source, 'deepseek_v4_1_flash_1017')
+  assert.equal(spaced.status, 'resolved')
+  assert.equal(spaced.match, 'family')
+  assert.equal(spaced.safe.contextWindow, 1048576)
 })
 
 test('unknown or forged publisher cannot supply original-provider fallback', () => {

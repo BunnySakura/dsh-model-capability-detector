@@ -18,34 +18,46 @@ Core discovery candidates do not carry reasoning levels. The plugin retains only
 
 ## Source priority and original specifications
 
-Default priority: **existing configuration → current channel API → directly verified original specifications → original-provider records mirrored by models.dev**. Reseller capacities are no longer aggregated into a default minimum.
+Each field takes the first available value from this list; **higher entries win**, and existing values are kept by default:
 
-`catalogNumericStrategy: official` is the new default and applies to all catalog fields. A directly reviewed DeepSeek-V4.1-Flash-1017 record supplies **1048576** context tokens, **393216** output tokens, image input and disclosed reasoning efforts. Sources: the official [release](https://api-docs.deepseek.com/news/news261017/), its [pinned model config](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json) and [API reference](https://api-docs.deepseek.com/api/create-chat-completion/), reviewed 2026-10-31. This exact snapshot remains usable offline. Floating aliases such as `deepseek-flash` resolve through the original-provider catalog record rather than being permanently pinned to an old release.
+1. **The channel API's unambiguous fields**, such as `context_length`, `max_output_tokens`, `top_provider.max_completion_tokens`.
+2. **Original-provider specifications**: the built-in reviewed record and models.dev entries that carry an original-provider documentation host.
+3. **Third-party consensus**: OpenRouter, LiteLLM and models.dev. A value is used when **at least two agree**. Numbers within 5% of each other agree and the smaller one is used, so a difference like 65536 versus 65535 does not block the field. An outlier inside one source is outvoted by its majority, and two agreeing sources outvote a third. With only one source, or two equally sized groups that are far apart, the field stays empty and the detection report says why. Third parties supply context, output cap and image input only; reasoning levels come from original records.
+4. **API hints**: `max_input_tokens` and `max_tokens` mean different things across gateways (an input-only limit, a default output size), so they are used only when nothing above has a value.
 
-Other models use original-provider entries from models.dev with an explicit provider identity and an allowlisted official documentation host; entries with a foreign canonical vendor are excluded. **models.dev is a community mirror; the plugin does not re-verify every website field on each pass.** Receipts distinguish `official-verified` from `original-provider-mirror`. The current host rules cover DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Moonshot and Zhipu. Unrecognized publishers remain unknown.
+A reviewed DeepSeek-V4.1-Flash-1017 record is built in: **1048576** context tokens, **393216** output tokens, image input and disclosed reasoning efforts. Sources: the official [release](https://api-docs.deepseek.com/news/news261017/), its [pinned model config](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json) and [API reference](https://api-docs.deepseek.com/api/create-chat-completion/), reviewed 2026-10-31. It works when public sources are unavailable and matches the exact snapshot ID only.
 
-Matching preserves punctuation, dates and versions, folding only case and surrounding whitespace. A channel prefix may differ when the complete model name matches. Conflicting identities or field values are withheld. API disclosures win field by field. No inference requests are sent to measure limits.
+models.dev entries need an explicit provider identity and an allowlisted official documentation host; entries with a foreign canonical vendor are excluded. **models.dev is a community mirror; the plugin does not re-verify every website field on each pass.** The host rules cover DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Moonshot and Zhipu.
 
-Original specifications **do not guarantee a reseller exposes the same limits**; receipts retain `channelVerified: false`. Existing values remain unchanged by default. Old minimum estimates cannot be distinguished from manual values and are not raised automatically. Clear a field and save after reviewing the replacement when you want to adopt it.
+**Name matching** tries, in order: the full name; the name without a channel prefix; then a relaxed *family match* that ignores a `:free`-style variant suffix, an 8-digit date snapshot and separator differences (`3.5` versus `3-5`). Family matches are marked `≈` in the report, and are withheld when they reach several identities or the original records disagree. Short numeric suffixes such as `-1017` are part of a model's identity and are never stripped. When a channel names models unusually, add `channel name = standard name` under **Model name aliases**; each entry matches exactly and aliases never chain.
+
+**Upgrades**: a value the plugin wrote earlier from a weaker source (its receipt still equals the current value) is replaced when a stronger source appears. A value you typed or edited has no matching receipt and is never touched. Turn this off with **Upgrade values this plugin wrote**. Values from older versions have no receipt and are treated as yours.
+
+Original specifications **do not guarantee a reseller exposes the same limits**; receipts keep `channelVerified: false`. No inference requests are sent to measure limits.
 
 ```yaml
-catalogNumericStrategy: official   # default: original specifications
-# catalogNumericStrategy: minimum   # explicit legacy reseller minimum
+catalogNumericStrategy: official   # default: original -> third-party tiers (above)
+# catalogNumericStrategy: minimum   # explicit legacy reseller minimum; no third-party tiers
 # catalogNumericStrategy: consensus # explicit legacy numeric consensus
+thirdPartySources: true            # false never contacts OpenRouter / LiteLLM
+upgradeWritten: true               # false keeps values the plugin wrote earlier
+modelAliases: { my-gateway-gpt: gpt-4o }
 catalogNumbers: true               # false disables numeric fallback
 catalogFallback: true              # false disables all public fallback, including built-in specifications
 ```
 
-The v5 catalog cache lives at `$DSH_HOME/cache/model-capability-detector/catalog.json`, with a default 7-day lifetime. A matching source and format may serve stale data after a failed refresh. Future timestamps are not fresh. The source URL is hashed instead of persisting its query parameters.
+The **detection report** (settings page) lists each saved route and model with every field's value and its tier (channel API, original provider, third-party consensus, API hint, set by you), and says why an empty field is empty. **Look up a model name** shows what a name would resolve to and each third-party source's vote, without changing anything. **Detect again now** runs a pass immediately. None of these contacts your channel or shows an address, key or header.
 
-After a successful configuration write, `provenance.json` in that directory retains field values, source URLs, time and a SHA-256 route/model/field key. It stores no provider endpoint, key or request headers. Public original model identities may appear in source metadata; keep these local files private.
+Public sources: the models.dev catalog (configurable URL), `https://openrouter.ai/api/v1/models`, and LiteLLM's `model_prices_and_context_window.json` from GitHub raw. The last two URLs are fixed, requests carry no credentials or user data, and responses are size-limited. Caches live in `$DSH_HOME/cache/model-capability-detector/`: `catalog.json` (v5) and `thirdparty.json`, valid for 7 days by default; a failed refresh may reuse a stale cache from the same source.
 
+After a successful configuration write, `provenance.json` in that directory retains field values, source, time and a SHA-256 route/model/field key. It stores no provider endpoint, key or request headers. Public original model identities may appear in source metadata; keep these local files private.
 ## API metadata
 
 The parser accepts `{data:[...]}`, `{models:{id:{...}}}`, `{models:[...]}` and top-level arrays. A model-map key is the request ID, even when its record names a different canonical ID.
 
-- Context: `contextWindow`, `context_window`, `context_length`, `max_model_len`, `max_input_tokens`, `limit.context`, `top_provider.context_length`, and related spellings.
-- Output cap: `max_output_tokens`, `max_tokens`, `max_completion_tokens`, `limit.output`, and related spellings.
+- Context: `contextWindow`, `context_window`, `context_length`, `max_model_len`, `limit.context`, `top_provider.context_length`, and related spellings.
+- Output cap: `max_output_tokens`, `max_completion_tokens`, `limit.output`, and related spellings.
+- Hints only: `max_input_tokens` and `max_tokens` are ambiguous (see above).
 - Image input: modality arrays, `architecture.modality`, and explicit vision flags.
 - Reasoning: explicit effort lists such as `reasoning.supported_efforts`, `reasoning_efforts`, `thinking_levels`, and schema enums. Vendor aliases map to pi-ai levels. An API effort list containing only `off` / `none` becomes `reasoningEfforts: false`, preventing reasoning fallback. A boolean reasoning flag alone does not invent levels. Modality strings such as `text->image` are parsed on the input side of the arrow only.
 
@@ -89,6 +101,9 @@ Override the plugin row in your profile patch:
     catalogTtlMs: 604800000
     catalogNumbers: true
     catalogNumericStrategy: official
+    thirdPartySources: true
+    upgradeWritten: true
+    modelAliases: {}
     updateCheckOnStartup: false
     discoveryTrigger: true
     logging: false

@@ -1,6 +1,6 @@
 # dsh-model-capability-detector
 
-在 DSH 中获取或保存第三方 API 渠道时，自动采集模型上下文长度、输出上限、识图能力和推理等级。API 明确披露的字段优先，缺失字段可由 [models.dev](https://models.dev) 兜底。
+在 DSH 中获取或保存第三方 API 渠道时，自动采集模型上下文长度、输出上限、识图能力和推理等级。API 明确披露的字段优先，其次是原厂文档，再次是至少两家一致的权威第三方（OpenRouter、LiteLLM、[models.dev](https://models.dev)）。
 
 > English: [README.en.md](README.en.md)
 
@@ -18,36 +18,49 @@ DSH 的发现结果结构不传递推理等级。插件在内存中缓存原始�
 
 ## 数据优先级与原厂规格
 
-默认顺序：**保留已有配置 → 当前渠道 API → 直接核验的原厂规格 → models.dev 的原厂记录镜像**。不会默认聚合其他转售渠道，也不取它们的最小值。
+每个字段按下面的顺序取值，**越靠前越优先**，已有的值默认保留：
 
-`catalogNumericStrategy: official` 是新默认值，影响全部目录能力字段。已内置直接核验的 DeepSeek-V4.1-Flash-1017：上下文 **1048576**、最大输出 **393216**、图片输入及明确披露的推理等级。来源为官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和[API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期为 2026-10-31。它可在目录不可用时使用，仅精确版本 ID 命中；浮动名称 `deepseek-flash` 通过原厂目录记录解析，不永久绑定到旧快照。
+1. **渠道 API 明确披露的字段**，例如 `context_length`、`max_output_tokens`、`top_provider.max_completion_tokens`。
+2. **原厂文档给出的规格**：内置核验记录，以及 models.dev 里带原厂文档域名的原厂记录。
+3. **权威第三方**：OpenRouter、LiteLLM、models.dev 三家，**至少两家一致**才采用。数值相差在 5% 以内算一致，取其中较小的值，所以不会因 65536 与 65535 这类微小差异而失败。同一来源内部若有离群值，以多数一致的一组为准；三家里两家一致就压过另一家。只有一家来源，或两组数值票数相同且差距明显时不填，并在检测报告里写明原因。第三方只提供上下文、最大输出和识图，推理等级只来自原厂记录。
+4. **API 参考值**：`max_input_tokens`、`max_tokens` 在各家网关里含义不一（可能只是输入上限或默认输出），只在上面都没有值时才用。
 
-其他模型使用 models.dev 时，要求明确的原厂 provider、受信任的原厂文档域名，并排除 canonical ID 属于其他厂商的记录。**models.dev 是社区镜像，插件没有逐次抓取并验证每个官网字段。** 数据来源记录会明确区分 `official-verified` 与 `original-provider-mirror`。当前原厂域名规则覆盖 DeepSeek、OpenAI、Anthropic、Google、xAI、Mistral、Cohere、Moonshot 和智谱；未识别厂商保持空白。
+内置了经核验的 DeepSeek-V4.1-Flash-1017：上下文 **1048576**、最大输出 **393216**、图片输入及明确披露的推理等级。来源为官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和[API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期为 2026-10-31。它可在公开来源不可用时使用，仅精确版本 ID 命中。
 
-匹配保留标点、日期与版本后缀，只忽略大小写及首尾空白；允许渠道前缀不同但完整模型名一致。不同原厂身份或同一身份披露的字段有冲突时，不自动填写该字段。API 只披露部分字段时，只补其余字段。不会发送推理请求来测容量。
+models.dev 的原厂记录要求明确的原厂 provider、受信任的原厂文档域名，并排除 canonical ID 属于其他厂商的记录。**models.dev 是社区镜像，插件没有逐次抓取并验证每个官网字段。** 当前原厂域名规则覆盖 DeepSeek、OpenAI、Anthropic、Google、xAI、Mistral、Cohere、Moonshot 和智谱。
 
-官网规格表示原厂能力，**不保证第三方渠道开放相同上限**。来源中的 `channelVerified: false` 保留这一事实。用户已有值默认不覆盖；旧版本写入的低值因无法区分手工配置，不自动上调。确认要采用新值时，可先清空对应字段再保存。
+**名称匹配**依次尝试：完整名称一致；去掉渠道前缀后一致；再放宽到「族匹配」，即忽略 `:free` 等变体后缀、日期快照（8 位日期）和分隔符差异（`3.5` 与 `3-5`）。族匹配在报告里标记 `≈`，且匹配到多个身份或原厂记录互相不一致时不填。`-1017` 这类短数字后缀属于模型身份，不会被去掉。渠道名称不规范时，可在设置页「模型名别名」里写 `渠道名 = 标准名`，每条精确匹配、不嵌套。
+
+**升级**：插件早先用较弱来源写入的值（回执仍与当前值一致），出现更强来源时会自动替换；你手填或改过的值没有匹配的回执，永远不动。可在设置里关闭「升级插件写入的值」。旧版本写入且没有回执的值无法与手填区分，按手填处理。
+
+官网规格表示原厂能力，**不保证第三方渠道开放相同上限**。来源里的 `channelVerified: false` 保留这一事实。不会发送推理请求来测容量。
 
 ```yaml
-catalogNumericStrategy: official   # 默认：原厂规格
-# catalogNumericStrategy: minimum   # 显式兼容模式：跨渠道最小值
+catalogNumericStrategy: official   # 默认：原厂 → 第三方分档（上述顺序）
+# catalogNumericStrategy: minimum   # 显式兼容模式：跨渠道最小值，不使用第三方分档
 # catalogNumericStrategy: consensus # 显式兼容模式：跨渠道数值一致才填
+thirdPartySources: true            # false 不访问 OpenRouter / LiteLLM
+upgradeWritten: true               # false 不升级插件早先写入的值
+modelAliases: { my-gateway-gpt: gpt-4o }
 catalogNumbers: true               # false 可关闭数值目录兜底
 catalogFallback: true              # false 关闭所有公开来源兜底，包括内置规格
 ```
 
-目录缓存为 v5，位于 `$DSH_HOME/cache/model-capability-detector/catalog.json`，默认有效期 7 天。同源同格式的过期缓存可在刷新失败时复用；未来时间戳不能视为新鲜。仅保存源 URL 指纹，不保存其查询参数。
+**检测报告**（设置页）按渠道和模型列出每个字段的值、来源档位（渠道 API、原厂、第三方一致、API 参考值、你手动设置），没填的写明原因。「试查模型名」输入一个名字即可看到它会解析成什么及各第三方来源的取值，不改任何配置。「立即重新检测」会马上跑一轮。这些功能不联系你的渠道，也不显示地址、密钥或请求头。
 
-每次配置成功写入后，来源记录保存到同目录的 `provenance.json`：字段和值、来源 URL、记录时间，以及路由/模型/字段的 SHA-256 标识。不保存渠道地址、密钥或请求头。公开原厂模型名仍可能出现在来源元数据中；这些本地文件不应分享。
+公开来源：models.dev 目录（可配地址）、`https://openrouter.ai/api/v1/models`、LiteLLM 的 `model_prices_and_context_window.json`（来自 GitHub raw）。后两个地址固定，请求不带凭据，也不含任何用户数据，响应有字节上限。缓存位于 `$DSH_HOME/cache/model-capability-detector/`：`catalog.json`（v5）和 `thirdparty.json`，默认有效期 7 天；刷新失败时同源的旧缓存可继续使用。
 
+每次配置成功写入后，来源记录保存到同目录的 `provenance.json`：字段和值、来源、记录时间，以及路由/模型/字段的 SHA-256 标识。不保存渠道地址、密钥或请求头。公开原厂模型名仍可能出现在来源元数据中；这些本地文件不应分享。
 ## API 解析
 
 | 配置字段 | 常见 API 字段 |
 |---|---|
-| `contextWindow` | `contextWindow`、`context_window`、`context_length`、`max_model_len`、`max_input_tokens`、`limit.context`、`top_provider.context_length` |
-| `maxTokens` | `max_output_tokens`、`max_tokens`、`max_completion_tokens`、`limit.output`、`top_provider.max_completion_tokens` |
+| `contextWindow` | `contextWindow`、`context_window`、`context_length`、`max_model_len`、`limit.context`、`top_provider.context_length` |
+| `maxTokens` | `max_output_tokens`、`max_completion_tokens`、`limit.output`、`top_provider.max_completion_tokens` |
 | `input` | `architecture.input_modalities`、`modalities.input`、`input`、`supports_vision`、`vision` 等 |
 | `reasoningEfforts` | `reasoning.supported_efforts`、`reasoning_efforts`、`thinking_levels`、`parameters.reasoning_effort.enum` 等 |
+
+`max_input_tokens` 与 `max_tokens` 含义不明，只作为参考值（见上节）。
 
 支持 `{data:[...]}`、`{models:{id:{...}}}`、`{models:[...]}` 和顶层数组。模型映射的 key 是实际请求 ID，优先于条目内的 canonical id。等级会归一化到 pi-ai 词汇，例如 `none → off`、`mid → medium`、`extra high → xhigh`；API 等级仅含 `off` / `none` 时写入 `reasoningEfforts: false`，阻止目录补入推理能力。仅声明支持推理而未披露等级时不会凭空生成等级。`text->image` 等模态字符串只解析箭头左侧的输入部分，不把图片输出视为识图能力。
 
@@ -91,6 +104,9 @@ logFile: "logs/model-capability-detector.log"  # 显式路径启用 JSONL 文件
     catalogTtlMs: 604800000
     catalogNumbers: true
     catalogNumericStrategy: official
+    thirdPartySources: true
+    upgradeWritten: true
+    modelAliases: {}
     updateCheckOnStartup: false
     discoveryTrigger: true
     logging: false
