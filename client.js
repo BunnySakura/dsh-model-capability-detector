@@ -65,6 +65,7 @@ window.__ModuleLoader__.load({
         fieldcontextWindow: 'Context window', fieldmaxTokens: 'Max output', fieldinput: 'Input', fieldreasoningEfforts: 'Reasoning', stateEmpty: 'Empty',
         tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you', tierpreset: 'Preset (a guess)',
         reasoning: 'Reasoning levels',
+        staleHost: 'The running plugin does not know these options yet, so they are hidden. Reload the plugin or restart DSH to load the new version: ',
         reasoningPresetLabel: 'Preset for unknown levels', reasoningPresetHint: 'When the sources agree a model reasons but name no level, fill this preset. It is a guess about what your channel accepts; any real source replaces it later. Off by default.',
         probeEnabledLabel: 'Allow probe requests', probeEnabledHint: 'Adds a Probe button to the report. A probe sends about eight tiny chat requests to your channel for one model (billable, a few hundred tokens each). Never runs by itself.',
         presetNone: 'None (leave blank)', presetPick: 'Preset to apply', presetApply: 'Apply preset', applyDone: 'Applied.', applyFailed: 'Not applied: ',
@@ -120,6 +121,7 @@ window.__ModuleLoader__.load({
         fieldcontextWindow: '上下文窗口', fieldmaxTokens: '最大输出', fieldinput: '输入', fieldreasoningEfforts: '推理', stateEmpty: '空',
         tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置', tierpreset: '预设（猜测值）',
         reasoning: '推理等级',
+        staleHost: '正在运行的插件还不认识这些选项，已先隐藏。请重载插件或重启 DSH 以加载新版本：',
         reasoningPresetLabel: '等级未知时套用的预设', reasoningPresetHint: '来源一致认为模型会推理、却没给出任何等级时，填入这套预设。它只是对渠道可接受取值的猜测，之后出现真实来源会自动替换。默认关闭。',
         probeEnabledLabel: '允许探测请求', probeEnabledHint: '在检测报告里增加“探测渠道”按钮。一次探测会向你的渠道就一个模型发约 8 个极小的对话请求（计费，每个几百 token）。不会自动运行。',
         presetNone: '不套用（留空）', presetPick: '要套用的预设', presetApply: '套用预设', applyDone: '已套用。', applyFailed: '未套用：',
@@ -209,8 +211,15 @@ window.__ModuleLoader__.load({
           const ready = state.phase === 'ready'
           const editing = ready && state.writable === true
           const effective = ready ? state.effective : {}
-          const shown = { ...effective, ...draft }
+          // A field marked for reset shows the value it will fall back to, not the saved one.
+          // `defaults` is the layer below the saved overrides (plugin config, else built-in).
+          const fallbackFor = Object.fromEntries(Object.keys(resets).filter((key) => ready && own(state.defaults, key)).map((key) => [key, state.defaults[key]]))
+          const shown = { ...effective, ...fallbackFor, ...draft }
           const overrides = ready ? state.overrides : {}
+          // Only options the running Host describes are shown. A Host that predates the page
+          // (not reloaded yet) does not know the newer ones; a plain text box would mislead.
+          const described = (key) => ready && own(state.fields, key)
+          const missing = ready ? FIELD_GROUPS.flatMap((group) => group.fields).filter((key) => !described(key)) : []
           const touched = [...new Set([...Object.keys(draft), ...Object.keys(resets)])]
           const changed = touched.length > 0
 
@@ -407,9 +416,10 @@ window.__ModuleLoader__.load({
             state.phase === 'failed' ? h('p', { role: 'alert' }, t('loadFailed')) : null,
             ready && !state.writable ? h('p', { role: 'status' }, t('readOnly')) : null,
             ready ? h('p', { style: { margin: '0 0 8px', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('resetHint')) : null,
-            ...(ready ? FIELD_GROUPS.map((group) => h('section', { key: group.id, style: { marginTop: 20 } },
+            missing.length > 0 ? h('p', { role: 'status', 'data-stale-host': 'true' }, `${t('staleHost')}${missing.join(', ')}`) : null,
+            ...(ready ? FIELD_GROUPS.filter((group) => group.fields.some(described)).map((group) => h('section', { key: group.id, style: { marginTop: 20 } },
               h('h4', { style: { margin: '0 0 4px', paddingBottom: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', fontSize: 14 } }, t(group.id)),
-              ...group.fields.map(control))) : []),
+              ...group.fields.filter(described).map(control))) : []),
             h('section', { style: { marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--dsw-alias-border-l2)' } },
               h('h4', { style: { margin: '0 0 8px', fontSize: 14 } }, t('report')),
               h('p', { style: { margin: '0 0 8px', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('reportNote')),
@@ -437,7 +447,7 @@ window.__ModuleLoader__.load({
                   Object.keys(lookupResult.votes ?? {}).length > 0 ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t('votes')}: ${Object.entries(lookupResult.votes).map(([name, vote]) => `${name} ${vote.context ?? '-'}/${vote.output ?? '-'}`).join(' · ')}`) : null) : null)),
             h('section', { style: { marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--dsw-alias-border-l2)' } },
               h('h4', { style: { margin: '0 0 8px', fontSize: 14 } }, t('updates')),
-              ready ? control('updateCheckOnStartup') : null,
+              described('updateCheckOnStartup') ? control('updateCheckOnStartup') : null,
               h('p', { role: 'status', 'aria-live': 'polite', style: { color: 'var(--dsw-alias-label-secondary)' } }, t(updateState.status ?? 'unchecked')),
               updateState.currentVersion ? h('p', {}, `${t('current')}: ${updateState.currentVersion}`) : null,
               updateState.version ? h('p', {}, `${t('latest')}: ${updateState.version}`) : null,

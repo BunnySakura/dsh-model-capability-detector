@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { compareVersions, parseVersion, readRelease, createUpdateChecker, RELEASES_URL } from '../lib/updates.js'
 import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
+import { describePresets } from '../lib/presets.js'
+import { createSettingsStore } from '../lib/settings.js'
 
 const release = (tag = 'v1.3.0') => ({ tag_name: tag, draft: false, prerelease: false, body: '<script>not executed</script> release notes', published_at: '2026-10-31T00:00:00Z', html_url: 'https://evil.test', tarball_url: 'https://evil.test/archive' })
 
@@ -367,6 +372,154 @@ test('the report offers a preset and a probe only where no level is known', asyn
     await tick()
     assert.equal(button(flatten(render()), 'probe').length, 0, 'no probe button unless the setting is on')
   } finally { globalThis.fetch = originalFetch }
+})
+
+/**
+ * Mount the settings page on a real settings store, so the field descriptions, the
+ * defaults and the save semantics are the Host's, not a stub's.
+ * @param overrides values already saved in the GUI layer.
+ * @param adjust may edit the snapshot the fake route sends (to imitate an older Host).
+ */
+async function mountSettings(overrides, adjust = (snapshot) => snapshot) {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-page-'))
+  await mkdir(join(home, 'model-capability-detector'), { recursive: true })
+  await writeFile(join(home, 'model-capability-detector', 'settings.json'), JSON.stringify({ version: 1, overrides }))
+  const store = createSettingsStore({ home })
+  const posts = []
+  let cursor = 0
+  const hooks = [], effects = []
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }] },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/settings')) {
+      if (init.method === 'POST') {
+        const body = JSON.parse(init.body)
+        posts.push(body)
+        const result = await store.update(body)
+        return Response.json({ ok: result.ok, presets: describePresets(), ...adjust(result.snapshot) }, { status: result.ok ? 200 : 400 })
+      }
+      return Response.json({ ok: true, presets: describePresets(), ...adjust(store.refresh()) })
+    }
+    return Response.json({ status: 'unchecked' })
+  }
+  let definition, Component
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+    window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+    document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+  })
+  definition.factory(() => React).apply({
+    effect: () => {}, locale: { register() {}, bind: () => (key) => key }, get: () => undefined,
+    slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component } },
+  })
+  const page = Component({ view: 'page' })
+  const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+  const render = () => { cursor = 0; return flatten(page.type(page.props)) }
+  render(); await tick()
+  return {
+    render, posts, tick, store,
+    control: (nodes, key) => nodes.find((node) => node.props?.['data-config-key'] === key),
+    button: (nodes, label) => nodes.find((node) => node.type === 'button' && node.children.includes(label)),
+    // The reset button sits in the same row as its field; find the row by its key.
+    resetOf: (nodes, key) => nodes.find((node) => node.type === 'div' && node.props.key === key)?.children.flatMap((child) => child?.children ?? [])
+      .find((node) => node?.type === 'button' && node.children.includes('reset')),
+    done: async () => { globalThis.fetch = original; await rm(home, { recursive: true, force: true }) },
+  }
+}
+
+test('the reasoning options are a drop-down and a switch, and the drop-down lists the presets', async () => {
+  const page = await mountSettings({})
+  try {
+    const nodes = page.render()
+    const preset = page.control(nodes, 'reasoningPreset')
+    assert.equal(preset.type, 'select', 'not a text box')
+    assert.equal(preset.props.value, 'none')
+    const options = preset.children.map((option) => [option.props.value, option.children[0]])
+    assert.deepEqual(options.map(([value]) => value), ['none', 'openai', 'extended', 'deepseek', 'toggle'])
+    assert.equal(options[0][1], 'presetNone')
+    assert.equal(options[3][1], 'deepseek · low/high/max', 'each preset is labelled with its levels')
+    const probe = page.control(nodes, 'probeEnabled')
+    assert.equal(probe.type, 'input')
+    assert.equal(probe.props.type, 'checkbox')
+    assert.equal(probe.props.checked, false)
+    assert.equal(nodes.some((node) => node.props?.['data-stale-host']), false, 'a current Host needs no notice')
+  } finally { await page.done() }
+})
+
+test('options an older Host does not describe are hidden with a notice, not shown as text boxes', async () => {
+  const page = await mountSettings({}, (snapshot) => {
+    const fields = { ...snapshot.fields }
+    delete fields.reasoningPreset
+    delete fields.probeEnabled
+    return { ...snapshot, fields }
+  })
+  try {
+    const nodes = page.render()
+    assert.equal(page.control(nodes, 'reasoningPreset'), undefined)
+    assert.equal(page.control(nodes, 'probeEnabled'), undefined)
+    assert.ok(page.control(nodes, 'timeoutMs'), 'options the Host does describe are still shown')
+    const notice = nodes.find((node) => node.props?.['data-stale-host'])
+    assert.ok(notice)
+    assert.match(notice.children[0], /reasoningPreset, probeEnabled/)
+  } finally { await page.done() }
+})
+
+test('Reset shows the value a field falls back to, saves only on Save, and Discard brings the old value back', async () => {
+  const page = await mountSettings({ modelAliases: { 'my-gw': 'gpt-4o' }, timeoutMs: 9000, probeEnabled: true })
+  try {
+    let nodes = page.render()
+    assert.equal(page.control(nodes, 'modelAliases').props.value, 'my-gw = gpt-4o')
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000)
+    assert.equal(page.control(nodes, 'probeEnabled').props.checked, true)
+
+    for (const key of ['modelAliases', 'timeoutMs', 'probeEnabled']) page.resetOf(nodes, key).props.onClick()
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'modelAliases').props.value, '', 'the alias box is emptied')
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 15000, 'a number shows its default')
+    assert.equal(page.control(nodes, 'probeEnabled').props.checked, false, 'a switch shows its default')
+    assert.equal(page.posts.length, 0, 'nothing is saved yet')
+    assert.deepEqual(page.store.effective().modelAliases, { 'my-gw': 'gpt-4o' }, 'the stored value is unchanged until Save')
+
+    // Not saving keeps everything as it was.
+    page.button(nodes, 'discard').props.onClick()
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'modelAliases').props.value, 'my-gw = gpt-4o')
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000)
+    assert.equal(page.control(nodes, 'probeEnabled').props.checked, true)
+
+    // Saving applies the reset.
+    page.resetOf(nodes, 'modelAliases').props.onClick()
+    nodes = page.render()
+    await page.button(nodes, 'save').props.onClick()
+    await page.tick()
+    assert.deepEqual(page.posts.at(-1).unset, ['modelAliases'])
+    assert.deepEqual(page.store.effective().modelAliases, {})
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'modelAliases').props.value, '', 'still empty after saving')
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000, 'the other fields were not reset')
+  } finally { await page.done() }
+})
+
+test('typing into a reset field takes it out of the reset again', async () => {
+  const page = await mountSettings({ timeoutMs: 9000 })
+  try {
+    let nodes = page.render()
+    page.resetOf(nodes, 'timeoutMs').props.onClick()
+    nodes = page.render()
+    page.control(nodes, 'timeoutMs').props.onChange({ currentTarget: { value: '7000', valueAsNumber: 7000 } })
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 7000)
+    await page.button(nodes, 'save').props.onClick()
+    await page.tick()
+    assert.deepEqual(page.posts.at(-1), { revision: page.posts.at(-1).revision, set: { timeoutMs: 7000 }, unset: [] })
+    assert.equal(page.store.effective().timeoutMs, 7000)
+  } finally { await page.done() }
 })
 
 test('the settings page edits aliases and shows the detection report and look-up', async () => {
