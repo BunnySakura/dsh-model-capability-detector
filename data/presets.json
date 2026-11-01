@@ -1,0 +1,18 @@
+{
+  "openai": {
+    "description": "OpenAI style: low, medium and high",
+    "efforts": { "off": null, "low": "low", "medium": "medium", "high": "high" }
+  },
+  "extended": {
+    "description": "OpenAI and xAI style with an extra top level",
+    "efforts": { "off": null, "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh" }
+  },
+  "deepseek": {
+    "description": "DeepSeek style: low, high and max",
+    "efforts": { "off": null, "low": "low", "high": "high", "max": "max" }
+  },
+  "toggle": {
+    "description": "Thinking on or off, for models without graded levels",
+    "efforts": { "off": null, "high": "high" }
+  }
+}

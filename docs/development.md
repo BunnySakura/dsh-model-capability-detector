@@ -20,7 +20,8 @@ node scripts/run-tests.mjs
 |---|---|
 | `detect.test.mjs` | 渠道模型列表解析、推理等级归一化、含义不明字段 |
 | `catalog.test.mjs` | 目录索引、缓存新鲜度、响应字节限制、旧版策略 |
-| `official.test.mjs` | 原厂记录、名称匹配、白名单 |
+| `official.test.mjs` | 原厂记录、名称匹配、核验记录的出处检查 |
+| `reasoning.test.mjs` | 原厂白名单（`data/vendors.json`）、「是否推理」信号、预设与合并规则、探测请求 |
 | `tiers.test.mjs` | 名称归一化、第三方一致与容差、合并顺序、升级、缓存与部分失败 |
 | `fallback.test.mjs` | 目录兜底的整合行为 |
 | `plugin.test.mjs` | 插件整体：触发、写入、卸载取消、实时设置、报告、试查、重新检测、升级 |
@@ -121,6 +122,18 @@ node scripts/privacy-scan.mjs
 gitleaks 的配置是仓库根目录的 `.gitleaks.toml`：保留全部默认规则，只对 `generic-api-key` 放行 `test/diagnostics.test.mjs` 里那个脱敏测试用的假密钥（按精确值匹配）。换一个值，或在别处出现同类密钥，仍会被报出。要放行新的假数据，先确认它确实是假的，再在配置里加一条精确值，不要放行整个目录。
 
 本地复现 CI 的扫描：下载 gitleaks 官方发布版并核对 SHA-256 后，在仓库里运行 `gitleaks git . --redact`（历史）和 `gitleaks dir . --redact`（工作区），退出码 0 为通过。`--redact` 让输出里的密钥值打码。
+
+## 维护数据文件
+
+新模型发布、厂商换了文档域名，只改 `data/` 下的文件，代码不动，提交里一眼能看出是在维护数据。
+
+| 文件 | 什么时候改 | 改完怎么验证 |
+|---|---|---|
+| `data/vendors.json` | 出现新的原厂；原厂换了文档域名或路径 | 对照 models.dev 里该 provider 的 `id` 和 `doc`；`node scripts/run-tests.mjs`（`reasoning.test.mjs` 检查格式和必备的厂商） |
+| `data/presets.json` | 出现新的推理等级写法 | 每套预设必须是 DSH 接受的字典（`off` 之外每个等级都有发送值，至少一个非 `off` 的等级），测试会逐套检查 |
+| `data/verified.json` | 逐项核实了某个模型的规格 | 三处出处、核验日期，测试会检查 |
+
+提交信息写成 `data: 白名单加入 xxx` 这样的形式，与代码改动分开提交。白名单只放确认过的原厂：先打开 models.dev 看该 provider 的 `doc` 域名确实是原厂文档，再写进去。
 
 ## 本地开发安装
 

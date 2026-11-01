@@ -287,6 +287,88 @@ test('a linked development copy shows a notice and offers no update button', asy
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('the report offers a preset and a probe only where no level is known', async () => {
+  let definition, Component
+  let cursor = 0
+  const hooks = [], effects = [], posts = []
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }] },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const state = (reasoning) => ({
+    contextWindow: { state: 'empty', reason: 'no-original-record' }, maxTokens: { state: 'empty', reason: 'no-original-record' },
+    input: { state: 'empty', reason: 'no-original-record' }, reasoningEfforts: reasoning,
+  })
+  const report = {
+    ok: true, probeEnabled: true, preset: 'none',
+    presets: { openai: { description: 'o', levels: ['off', 'low', 'medium', 'high'] }, toggle: { description: 't', levels: ['off', 'high'] } },
+    routes: [
+      { route: 'chat', api: 'openai-completions', models: [
+        { id: 'blank', matched: false, fields: state({ state: 'empty', reason: 'no-original-record', support: 'yes' }) },
+        { id: 'known', matched: false, fields: state({ state: 'set', value: { low: 'low' }, tier: 'api' }) },
+      ] },
+      { route: 'resp', api: 'openai-responses', models: [{ id: 'blank2', matched: false, fields: state({ state: 'empty', reason: 'no-original-record' }) }] },
+    ],
+  }
+  const probeResult = { ok: true, verdict: 'proposal', baseline: { reasoned: false }, validates: true, levels: { low: 'reasoned', high: 'reasoned' }, proposal: { off: null, low: 'low', high: 'high' } }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/settings')) return Response.json({ ok: true, revision: 'r', writable: true, defaults: {}, overrides: {}, effective: {}, fields: {}, presets: report.presets })
+    if (init.method === 'POST') {
+      const body = JSON.parse(init.body)
+      posts.push(body)
+      return Response.json(body.action === 'probe' ? probeResult : { ok: true })
+    }
+    return Response.json(report)
+  }
+  try {
+    runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+      window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+      document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+    })
+    definition.factory(() => React).apply({
+      effect: () => {}, locale: { register() {}, bind: () => (key) => key },
+      slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component } },
+    })
+    const page = Component({ view: 'page' })
+    const render = () => { cursor = 0; return page.type(page.props) }
+    const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+    const button = (nodes, label) => nodes.filter((node) => node.type === 'button' && node.children.includes(label))
+    render(); await tick()
+    await button(flatten(render()), 'reportLoad')[0].props.onClick()
+    await tick()
+    let nodes = flatten(render())
+    assert.equal(nodes.filter((node) => node.type === 'select' && node.props['aria-label'] === 'presetPick').length, 2, 'a picker for each blank row, none for the known one')
+    assert.equal(button(nodes, 'presetApply').length, 2)
+    assert.equal(button(nodes, 'probe').length, 1, 'only the chat route can be probed')
+    assert.ok(nodes.some((node) => node.children?.includes('supportyes')), 'what the sources say about reasoning is shown')
+
+    await button(nodes, 'presetApply')[0].props.onClick()
+    await tick()
+    assert.deepEqual(posts[0], { action: 'apply-reasoning', route: 'chat', model: 'blank', preset: 'openai' }, 'the first preset is pre-selected')
+    nodes = flatten(render())
+    assert.ok(nodes.some((node) => node.children?.includes('applyDone')))
+
+    await button(nodes, 'probe')[0].props.onClick()
+    await tick()
+    assert.deepEqual(posts.at(-1), { action: 'probe', route: 'chat', model: 'blank' })
+    nodes = flatten(render())
+    assert.ok(nodes.some((node) => typeof node.children?.[0] === 'string' && node.children[0].startsWith('probeverdictproposal')))
+    await button(nodes, 'probeApply')[0].props.onClick()
+    await tick()
+    assert.deepEqual(posts.at(-1), { action: 'apply-reasoning', route: 'chat', model: 'blank', efforts: { off: null, low: 'low', high: 'high' } })
+
+    report.probeEnabled = false
+    await button(flatten(render()), 'reportLoad')[0].props.onClick()
+    await tick()
+    assert.equal(button(flatten(render()), 'probe').length, 0, 'no probe button unless the setting is on')
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('the settings page edits aliases and shows the detection report and look-up', async () => {
   let definition, Component
   let cursor = 0

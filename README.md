@@ -44,6 +44,8 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 | `catalogNumbers` | `true` | 允许公开来源补上下文和最大输出 |
 | `catalogNumericStrategy` | `official` | `official` 为分档取值；`minimum`、`consensus` 为旧版兼容模式 |
 | `thirdPartySources` | `true` | 允许参考 OpenRouter 和 LiteLLM |
+| `reasoningPreset` | `none` | 来源一致认为模型会推理、却没有等级时自动填入的预设（`openai`、`extended`、`deepseek`、`toggle`），`none` 为不填 |
+| `probeEnabled` | `false` | 在检测报告里提供「探测渠道」按钮，会向渠道发少量计费请求，从不自动运行 |
 | `openrouterUrl` | `https://openrouter.ai/api/v1/models` | OpenRouter 模型列表地址。默认地址访问不了时可改成镜像，只接受不含凭据的 http(s) |
 | `litellmUrl` | LiteLLM 仓库里的 `model_prices_and_context_window.json` | LiteLLM 模型表地址，规则同上 |
 | `upgradeWritten` | `true` | 出现更强来源时升级插件早先写入的值 |
@@ -104,6 +106,12 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 
 **为什么设置页没有「更新」按钮，只有一段说明？** 当前运行的是链接到开发目录的副本（profile 里写成 `link:路径`）。让插件管理器更新这样的副本，会替换链接指向的目录，可能删除其中的文件。请在该目录里用 git 拉取对应标签，或把 profile 里的 `link:` 改成 GitHub 地址安装。
 
+**为什么很多模型的推理等级是空的，界面也没有推理选项？** DSH 对没有 `reasoningEfforts` 的自定义模型一律按「不推理」处理。等级只能来自渠道 API 和原厂记录；第三方来源不给等级，不少原厂记录也只写了开关。检测报告里，这类模型会显示来源是否认为它会推理，并提供两个办法：
+- 从预设里选一套手动套用（low/medium/high、low/high/max、只有开关等）。预设是对渠道可接受取值的猜测，用之前确认你的渠道认这些值。
+- 打开「允许探测请求」后点「探测渠道」，让插件向你的渠道试探它接受哪些等级，再决定是否套用。会产生少量计费请求。
+
+也可以在设置里选「等级未知时套用的预设」，让插件对「来源一致认为会推理」的模型自动填入，默认关闭。
+
 **为什么有的值我没改过却变了？** 插件早先用较弱来源写入的值，出现更强来源时会自动升级。你手填或改过的值不会动。在设置里关闭「升级插件写入的值」可禁止升级。
 
 **怎么让它覆盖已有值？** 打开 `overwrite`，或先清空那个字段再保存。
@@ -115,6 +123,7 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 ## 隐私与网络
 
 - **渠道请求**：向你配置的渠道发 `GET {baseURL}/models`（Anthropic 为 `/v1/models`）。API key 通过 DSH 的凭据服务即时取用，请求拒绝重定向。
+- **渠道探测**：默认关闭。打开「允许探测请求」后，只在你点击某个模型的「探测渠道」时，向该渠道发约 8 个极小的对话请求（`POST {baseURL}/chat/completions`，固定提示词，每个最多 256 个输出 token，会计费）。结果只含各等级是否被接受，不含回答、地址或密钥。
 - **公开来源**：models.dev 目录、`openrouter.ai/api/v1/models`、GitHub 上 LiteLLM 的 `model_prices_and_context_window.json`。OpenRouter 和 LiteLLM 的地址可以换成镜像。请求不带任何凭据和用户数据，响应有大小上限。
 - **更新检查**：默认关闭。开启后只访问本项目的 GitHub Releases。
 - **本地文件**，都在 `$DSH_HOME` 下，不含密钥、渠道地址和请求头：

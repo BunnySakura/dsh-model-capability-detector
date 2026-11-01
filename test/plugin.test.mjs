@@ -9,12 +9,13 @@
 
 import assert from 'node:assert/strict'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { apply, DEFAULT_CONFIG } from '../index.js'
+import { presetEfforts } from '../lib/presets.js'
 import { provenanceKey } from '../lib/provenance.js'
 
 /** A controllable stand-in for the Host settings row this plugin writes. */
@@ -680,4 +681,160 @@ test('turning upgrades off leaves earlier values alone', async () => {
     await settle()
     assert.equal(state.providers['example-route'].models[0].contextWindow, 1000)
   } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
+})
+
+const chatRoute = (models, api = 'openai-completions') => ({ baseURL: 'https://gateway.test/v1', api, apiKeyEnv: 'TEST_API_KEY', models })
+
+test('apply-reasoning writes a chosen preset onto a blank row and records it as the user’s choice', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-apply-'))
+  const routes = new Map()
+  const providers = { r: chatRoute([{ id: 'a' }, { id: 'b' }, { id: 'c', reasoningEfforts: false }]) }
+  const { ctx, state } = createHarness({ homePath: home, providers, routes })
+  try {
+    apply(ctx, { startupDelayMs: 3600000, catalogFallback: false })
+    const done = await call(routes, { action: 'apply-reasoning', route: 'r', model: 'a', preset: 'deepseek' })
+    assert.equal(done.status, 200)
+    assert.deepEqual(state.providers.r.models[0].reasoningEfforts, { off: null, low: 'low', high: 'high', max: 'max' })
+    assert.equal(state.providers.r.models[1].reasoningEfforts, undefined, 'other rows are untouched')
+    assert.equal(state.providers.r.baseURL, 'https://gateway.test/v1')
+    const receipts = JSON.parse(await readFile(join(home, 'cache', 'model-capability-detector', 'provenance.json'), 'utf8')).receipts
+    assert.equal(receipts[provenanceKey('r', 'a', 'reasoningEfforts')].source.kind, 'manual')
+
+    const refuse = async (input, status, reason) => {
+      const response = await call(routes, { action: 'apply-reasoning', route: 'r', ...input })
+      assert.equal(response.status, status, JSON.stringify(input))
+      assert.equal((await response.json()).reason, reason, JSON.stringify(input))
+    }
+    await refuse({ model: 'a', preset: 'openai' }, 409, 'already-set')
+    await refuse({ model: 'c', preset: 'openai' }, 409, 'already-set') // an explicit false is a decision too
+    await refuse({ model: 'b', preset: 'nope' }, 400, 'unknown-preset')
+    await refuse({ model: 'b', preset: 5 }, 400, 'unknown-preset')
+    await refuse({ model: 'zzz', preset: 'openai' }, 404, 'not-found')
+    await refuse({ route: 'nope', model: 'b', preset: 'openai' }, 404, 'not-found')
+    await refuse({ route: '__proto__', model: 'b', preset: 'openai' }, 404, 'not-found')
+    await refuse({ model: 'b' }, 400, 'invalid-request')
+    await refuse({ model: 'b', efforts: { low: null } }, 400, 'invalid-request')
+    await refuse({ model: 'b', efforts: { turbo: 'x' } }, 400, 'invalid-request')
+    await refuse({ route: 5, model: 'b', preset: 'openai' }, 400, 'invalid-request')
+    assert.equal(state.writes.length, 1, 'refusals write nothing')
+
+    const custom = await call(routes, { action: 'apply-reasoning', route: 'r', model: 'b', efforts: { high: 'high', off: null } })
+    assert.equal(custom.status, 200)
+    assert.deepEqual(state.providers.r.models[1].reasoningEfforts, { off: null, high: 'high' })
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('apply-reasoning and probe stand down for a dry run or a disabled plugin', async () => {
+  const providers = { r: chatRoute([{ id: 'a' }]) }
+  const dry = new Map()
+  const { ctx, state } = createHarness({ providers, routes: dry })
+  apply(ctx, { startupDelayMs: 3600000, catalogFallback: false, dryRun: true, probeEnabled: true })
+  const dryRun = await call(dry, { action: 'apply-reasoning', route: 'r', model: 'a', preset: 'openai' })
+  assert.deepEqual([dryRun.status, (await dryRun.json()).reason], [409, 'dry-run'])
+  assert.equal(state.writes.length, 0)
+  const off = new Map()
+  apply(createHarness({ providers, routes: off }).ctx, { enabled: false, probeEnabled: true })
+  for (const input of [{ action: 'apply-reasoning', route: 'r', model: 'a', preset: 'openai' }, { action: 'probe', route: 'r', model: 'a' }]) {
+    const response = await call(off, input)
+    assert.deepEqual([response.status, (await response.json()).reason], [409, 'disabled'], input.action)
+  }
+})
+
+test('a probe needs the opt-in, an OpenAI-compatible chat route and a known model, and returns no secrets', async () => {
+  const providers = { chat: chatRoute([{ id: 'm' }]), resp: chatRoute([{ id: 'm' }], 'openai-responses') }
+  const seen = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body)
+    seen.push({ url: String(url), headers: init.headers, body })
+    if (body.reasoning_effort !== undefined && body.reasoning_effort !== 'low') return new Response('{}', { status: 400 })
+    return Response.json({ usage: { completion_tokens_details: { reasoning_tokens: body.reasoning_effort ? 9 : 0 } } })
+  }
+  try {
+    const closed = new Map()
+    apply(createHarness({ providers, routes: closed }).ctx, { startupDelayMs: 3600000, catalogFallback: false })
+    const refused = await call(closed, { action: 'probe', route: 'chat', model: 'm' })
+    assert.deepEqual([refused.status, (await refused.json()).reason], [403, 'probe-disabled'])
+    assert.equal(seen.length, 0, 'no request without the opt-in')
+
+    const routes = new Map()
+    apply(createHarness({ providers, routes }).ctx, { startupDelayMs: 3600000, catalogFallback: false, probeEnabled: true })
+    const reasonOf = async (input) => { const response = await call(routes, { action: 'probe', ...input }); return [response.status, (await response.json()).reason] }
+    assert.deepEqual(await reasonOf({ route: 'resp', model: 'm' }), [400, 'unsupported-api'])
+    assert.deepEqual(await reasonOf({ route: 'chat', model: 'zzz' }), [404, 'not-found'])
+    assert.deepEqual(await reasonOf({ route: 'nope', model: 'm' }), [404, 'not-found'])
+    assert.deepEqual(await reasonOf({ route: '__proto__', model: 'm' }), [404, 'not-found'])
+    assert.deepEqual(await reasonOf({ route: 'chat' }), [400, 'invalid-request'])
+    assert.equal(seen.length, 0, 'refused before any request')
+
+    const response = await call(routes, { action: 'probe', route: 'chat', model: 'm' })
+    const text = await response.text()
+    const result = JSON.parse(text)
+    assert.equal(response.status, 200)
+    assert.equal(result.verdict, 'proposal')
+    assert.deepEqual(result.proposal, { off: null, low: 'low' })
+    assert.equal(seen[0].headers.get('authorization'), 'Bearer sk-test', 'the credential service supplied the key')
+    assert.equal(text.includes('gateway.test') || text.includes('sk-test') || text.includes('TEST_API_KEY'), false)
+  } finally { globalThis.fetch = original }
+})
+
+test('only one probe runs at a time, and the lock is released afterwards', async () => {
+  const providers = { chat: chatRoute([{ id: 'm' }]) }
+  const original = globalThis.fetch
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  globalThis.fetch = async () => { await gate; return Response.json({}) }
+  try {
+    const routes = new Map()
+    apply(createHarness({ providers, routes }).ctx, { startupDelayMs: 3600000, catalogFallback: false, probeEnabled: true })
+    const first = call(routes, { action: 'probe', route: 'chat', model: 'm' })
+    await settle()
+    const second = await call(routes, { action: 'probe', route: 'chat', model: 'm' })
+    assert.deepEqual([second.status, (await second.json()).reason], [409, 'busy'])
+    release()
+    assert.equal((await first).status, 200)
+    const third = await call(routes, { action: 'probe', route: 'chat', model: 'm' })
+    assert.equal(third.status, 200, 'the lock was released')
+  } finally { release?.(); globalThis.fetch = original }
+})
+
+test('the preset setting fills levels only for models the channel says reason, and is off by default', async () => {
+  const listingBody = { data: [{ id: 'a', supported_parameters: ['reasoning'], context_length: 1000 }, { id: 'b', context_length: 1000 }] }
+  for (const preset of ['openai', 'none']) {
+    const home = await mkdtemp(join(tmpdir(), 'mcd-preset-'))
+    const stub = stubFetch(listingBody)
+    try {
+      const { ctx, state } = createHarness({ homePath: home, providers: { r: chatRoute([{ id: 'a' }, { id: 'b' }], 'openai-responses') } })
+      apply(ctx, { startupDelayMs: 0, debounceMs: 0, catalogFallback: false, reasoningPreset: preset })
+      await settle()
+      const [a, b] = state.providers.r.models
+      assert.equal(b.reasoningEfforts, undefined, 'no sign that b reasons')
+      if (preset === 'none') {
+        assert.equal(a.reasoningEfforts, undefined, 'off by default')
+      } else {
+        assert.deepEqual(a.reasoningEfforts, presetEfforts('openai'))
+        const receipts = JSON.parse(await readFile(join(home, 'cache', 'model-capability-detector', 'provenance.json'), 'utf8')).receipts
+        assert.equal(receipts[provenanceKey('r', 'a', 'reasoningEfforts')].source.kind, 'preset')
+      }
+    } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
+  }
+})
+
+test('the report and settings routes describe presets by level name only', async () => {
+  const routes = new Map()
+  apply(createHarness({ routes }).ctx, { startupDelayMs: 3600000, catalogFallback: false, probeEnabled: true, reasoningPreset: 'toggle' })
+  const report = await (await call(routes)).json()
+  assert.equal(report.probeEnabled, true)
+  assert.equal(report.preset, 'toggle')
+  assert.equal(report.routes[0].api, 'openai-responses')
+  assert.deepEqual(report.presets.deepseek.levels, ['off', 'low', 'high', 'max'])
+  assert.equal(JSON.stringify(report.presets).includes('"high":"high"'), false, 'no wire values')
+  const settings = routes.get('/api/model-capability-detector/settings')
+  const body = await (await settings.fetch(new Request('https://local.test/s'))).json()
+  assert.ok(body.presets.openai)
+  assert.deepEqual(body.fields.reasoningPreset.values.slice(0, 1), ['none'])
+  const unknown = await (await call(routes, { action: 'lookup', model: 'no-such-model' })).json()
+  assert.equal(unknown.fields.reasoningEfforts.support, 'unknown')
+  const pinned = await (await call(routes, { action: 'lookup', model: 'deepseek-v4.1-flash-1017' })).json()
+  assert.equal(pinned.fields.reasoningEfforts.state, 'found')
 })

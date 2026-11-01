@@ -2,6 +2,22 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增与变更
+
+- 原厂白名单移到 `data/vendors.json`，与代码解耦：新模型厂商出现或文档域名变了，只改这个数据文件。每行写 models.dev 的 provider、厂商命名空间、文档地址和（可选的）模型名正则。文档地址可以带路径前缀，没有 `canonical_model_id` 的记录要匹配模型名正则，同一厂商的多个 provider 共用一个命名空间。
+- 白名单扩充到 OpenAI、Anthropic、DeepSeek、Google（Gemini）、xAI（Grok）、智谱（GLM，含 z.ai）、月之暗面（Kimi，含国内站）和阿里云（Qwen，含国内站）。两个 provider 对同一字段给出不同的值时，该字段不填。
+- 新增「是否推理」信号，与「有哪些等级」分开：原厂记录（包括只有开关或 token 预算的）单独决定，否则 OpenRouter 的 `supported_parameters`、LiteLLM 的 `supports_reasoning`、models.dev 的 `reasoning` 至少两家一致才给出结论，某个来源没写不算「否」。渠道列表里「支持推理但没给等级」记为提示。检测报告对没有等级的模型显示这一结论。
+- 新增推理等级预设 `data/presets.json`（`openai`、`extended`、`deepseek`、`toggle`）。报告里对没有等级的模型可以手动选一套套用，来源档位为 `manual`，永不被替换。新增设置 `reasoningPreset`（默认 `none`）：来源一致认为会推理、却没有任何等级时自动填入，来源档位为 `preset`，是最低一档，之后出现任何真实来源会自动替换；原厂记录之间有分歧时不填。
+- 新增可选的探测请求，默认关闭（`probeEnabled`）。点击「探测渠道」时，向一个 OpenAI 兼容对话渠道发约 8 个极小的请求（计费）：一个不带等级、一个带无效等级（看渠道是否校验）、再逐个试各等级。只有渠道接受、并且返回里出现推理迹象的等级才进入建议，要你点击才写入。只报告状态，不含回答、地址或密钥；同一时间只运行一个，渠道报错立即停止。
+- 来源档位调整：新增 `preset`（最低的真实档之下）和 `manual`（最高），其余顺延一位。缓存版本各升一级（目录 6，第三方 2），旧缓存在下一轮重新下载。
+- 新增 `POST /detector` 的 `apply-reasoning` 与 `probe` 动作，设置接口返回预设列表。
+
+### 修复
+
+- 一个模型名对应多个原厂身份（`ambiguous`）时，检测报告和后台检测会读到缺失的 `safe`、`reasons` 而出错，现在返回空但完整的结果。
+
 ## [1.6.0]
 
 ### 新增与变更

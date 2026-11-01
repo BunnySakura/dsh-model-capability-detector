@@ -1,0 +1,15 @@
+[
+  { "vendor": "openai", "provider": "openai", "docs": ["platform.openai.com", "developers.openai.com"] },
+  { "vendor": "anthropic", "provider": "anthropic", "docs": ["docs.anthropic.com", "platform.claude.com", "docs.claude.com"] },
+  { "vendor": "deepseek", "provider": "deepseek", "docs": ["api-docs.deepseek.com"] },
+  { "vendor": "google", "provider": "google", "docs": ["ai.google.dev"] },
+  { "vendor": "xai", "provider": "xai", "docs": ["docs.x.ai"] },
+  { "vendor": "zhipuai", "provider": "zhipuai", "docs": ["docs.bigmodel.cn", "open.bigmodel.cn"] },
+  { "vendor": "zhipuai", "provider": "zai", "docs": ["docs.z.ai"] },
+  { "vendor": "moonshotai", "provider": "moonshotai", "docs": ["platform.moonshot.ai", "platform.moonshot.cn"] },
+  { "vendor": "moonshotai", "provider": "moonshotai-cn", "docs": ["platform.moonshot.cn", "platform.moonshot.ai"] },
+  { "vendor": "alibaba", "provider": "alibaba", "docs": ["www.alibabacloud.com/help/en/model-studio"], "models": "^(qwen|qwq|qvq)" },
+  { "vendor": "alibaba", "provider": "alibaba-cn", "docs": ["www.alibabacloud.com/help/en/model-studio"], "models": "^(qwen|qwq|qvq)" },
+  { "vendor": "mistral", "provider": "mistral", "docs": ["docs.mistral.ai"] },
+  { "vendor": "cohere", "provider": "cohere", "docs": ["docs.cohere.com"] }
+]

@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
     const FIELD_GROUPS = [
       { id: 'detection', fields: ['enabled', 'settingsNs', 'discoveryTrigger', 'timeoutMs', 'debounceMs', 'startupDelayMs', 'maxResponseBytes'] },
       { id: 'fallback', fields: ['catalogFallback', 'catalogUrl', 'catalogTimeoutMs', 'catalogMaxBytes', 'catalogTtlMs', 'catalogNumbers', 'catalogNumericStrategy', 'thirdPartySources', 'openrouterUrl', 'litellmUrl', 'upgradeWritten', 'modelAliases', 'overwrite', 'dryRun'] },
+      { id: 'reasoning', fields: ['reasoningPreset', 'probeEnabled'] },
       { id: 'diagnostics', fields: ['logging', 'logFile'] },
     ]
     const LABELS = {
@@ -62,7 +63,15 @@ window.__ModuleLoader__.load({
         rescan: 'Detect again now', rescanning: 'Detecting…', rescanDone: 'Detection finished. Show the report again to see the result.', rescanFailed: 'Detection did not run (the plugin may be disabled).',
         lookup: 'Look up a model name', lookupPlaceholder: 'Model name as the channel lists it', lookupRun: 'Look up', lookupFailed: 'Look-up failed.', matched: 'Matched', unmatched: 'No original record', aliased: 'via alias', votes: 'Third-party sources',
         fieldcontextWindow: 'Context window', fieldmaxTokens: 'Max output', fieldinput: 'Input', fieldreasoningEfforts: 'Reasoning', stateEmpty: 'Empty',
-        tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you',
+        tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you', tierpreset: 'Preset (a guess)',
+        reasoning: 'Reasoning levels',
+        reasoningPresetLabel: 'Preset for unknown levels', reasoningPresetHint: 'When the sources agree a model reasons but name no level, fill this preset. It is a guess about what your channel accepts; any real source replaces it later. Off by default.',
+        probeEnabledLabel: 'Allow probe requests', probeEnabledHint: 'Adds a Probe button to the report. A probe sends about eight tiny chat requests to your channel for one model (billable, a few hundred tokens each). Never runs by itself.',
+        presetNone: 'None (leave blank)', presetPick: 'Preset to apply', presetApply: 'Apply preset', applyDone: 'Applied.', applyFailed: 'Not applied: ',
+        supportyes: 'sources say it reasons', supportno: 'sources say it does not reason',
+        probe: 'Probe channel', probing: 'Probing…', probeFailed: 'Probe failed: ', probeApply: 'Apply probe result', probeDefaultThinks: 'reasons even without a level', probeNoValidation: 'channel accepts any level, so acceptance proves little',
+        probeverdictproposal: 'Levels the channel accepts', probeverdictunverifiable: 'Cannot tell which levels work', 'probeverdictno-evidence': 'No sign that a level changes anything',
+        probereasonunauthorized: 'the key was refused', 'probereasonnot-found': 'endpoint or model not found', 'probereasonrate-limited': 'rate limited', probereasonunreachable: 'channel unreachable', 'probereasonserver-error': 'channel error', 'probereasonbaseline-rejected': 'the channel rejected a plain request', 'probereasonprobe-disabled': 'probing is off', 'probereasonunsupported-api': 'only OpenAI-compatible chat channels can be probed', probereasonbusy: 'another probe is running',
         'reasonno-original-record': 'No original-provider record', 'reasonnot-disclosed-by-original': 'Original record does not state it', 'reasonoriginal-records-disagree': 'Original records disagree',
         'reasonno-third-party-data': 'No third-party data', 'reasonsingle-third-party-source': 'Only one third-party source', 'reasonthird-party-conflict': 'Third-party sources disagree',
         'reasoncatalog-disabled': 'Public sources are off', 'reasonfield-disabled': 'This field is not filled from sources', reasonwithheld: 'Withheld: sources disagree', reasonunknown: 'Model not found', reasonambiguous: 'Name matches several models',        strategyOfficial: 'Original-provider specifications (recommended)', strategyMinimum: 'Legacy: minimum across matching publishers', strategyConsensus: 'Legacy: accept numbers only when publishers agree',
@@ -109,7 +118,15 @@ window.__ModuleLoader__.load({
         rescan: '立即重新检测', rescanning: '检测中…', rescanDone: '检测完成。再次点击“查看报告”可看到结果。', rescanFailed: '检测没有运行（插件可能已关闭）。',
         lookup: '试查模型名', lookupPlaceholder: '渠道里列出的模型名', lookupRun: '查询', lookupFailed: '查询失败。', matched: '已匹配', unmatched: '没有原厂记录', aliased: '经别名', votes: '第三方来源',
         fieldcontextWindow: '上下文窗口', fieldmaxTokens: '最大输出', fieldinput: '输入', fieldreasoningEfforts: '推理', stateEmpty: '空',
-        tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置',
+        tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置', tierpreset: '预设（猜测值）',
+        reasoning: '推理等级',
+        reasoningPresetLabel: '等级未知时套用的预设', reasoningPresetHint: '来源一致认为模型会推理、却没给出任何等级时，填入这套预设。它只是对渠道可接受取值的猜测，之后出现真实来源会自动替换。默认关闭。',
+        probeEnabledLabel: '允许探测请求', probeEnabledHint: '在检测报告里增加“探测渠道”按钮。一次探测会向你的渠道就一个模型发约 8 个极小的对话请求（计费，每个几百 token）。不会自动运行。',
+        presetNone: '不套用（留空）', presetPick: '要套用的预设', presetApply: '套用预设', applyDone: '已套用。', applyFailed: '未套用：',
+        supportyes: '来源认为会推理', supportno: '来源认为不推理',
+        probe: '探测渠道', probing: '探测中…', probeFailed: '探测失败：', probeApply: '套用探测结果', probeDefaultThinks: '不指定等级也会推理', probeNoValidation: '渠道接受任何等级，接受不能说明什么',
+        probeverdictproposal: '渠道接受的等级', probeverdictunverifiable: '无法判断哪些等级有效', 'probeverdictno-evidence': '没有迹象表明等级起作用',
+        probereasonunauthorized: '密钥被拒绝', 'probereasonnot-found': '找不到地址或模型', 'probereasonrate-limited': '被限流', probereasonunreachable: '连不上渠道', 'probereasonserver-error': '渠道出错', 'probereasonbaseline-rejected': '渠道拒绝了普通请求', 'probereasonprobe-disabled': '探测已关闭', 'probereasonunsupported-api': '只能探测 OpenAI 兼容的对话渠道', probereasonbusy: '另一个探测正在进行',
         'reasonno-original-record': '没有原厂记录', 'reasonnot-disclosed-by-original': '原厂记录未给出', 'reasonoriginal-records-disagree': '原厂记录不一致',
         'reasonno-third-party-data': '没有第三方数据', 'reasonsingle-third-party-source': '只有一家第三方来源', 'reasonthird-party-conflict': '第三方来源不一致',
         'reasoncatalog-disabled': '公开来源已关闭', 'reasonfield-disabled': '此字段不从来源填写', reasonwithheld: '来源不一致，未填', reasonunknown: '没找到该模型', reasonambiguous: '名称对应多个模型',        strategyOfficial: '原厂规格（推荐）', strategyMinimum: '旧版：匹配发布者中取最小值', strategyConsensus: '旧版：发布者数值一致时才填写',
@@ -172,6 +189,7 @@ window.__ModuleLoader__.load({
           const [rescanState, setRescanState] = React.useState('')
           const [lookupName, setLookupName] = React.useState('')
           const [lookupResult, setLookupResult] = React.useState(null)
+          const [rows, setRows] = React.useState({})
           const mounted = React.useRef(true)
 
           const load = async () => {
@@ -281,6 +299,53 @@ window.__ModuleLoader__.load({
               if (alive && mounted.current) setLookupResult(body.ok ? body : { failed: true })
             } catch { if (alive && mounted.current) setLookupResult({ failed: true }) }
           }
+          // Per-model state for the preset picker and the probe, keyed by route and model.
+          const rowKey = (route, model) => JSON.stringify([route, model])
+          const patchRow = (route, model, patch) => setRows((previous) => ({ ...previous, [rowKey(route, model)]: { ...previous[rowKey(route, model)], ...patch } }))
+          const applyRow = async (route, model, payload) => {
+            patchRow(route, model, { busy: true, message: '' })
+            try {
+              const { body } = await request(DETECTOR_URL, { action: 'apply-reasoning', route, model, ...payload })
+              if (!alive || !mounted.current) return
+              if (body.ok) { patchRow(route, model, { busy: false, message: 'applyDone', probe: undefined }); await loadReport() }
+              else patchRow(route, model, { busy: false, message: `applyFailed:${body.reason ?? 'error'}` })
+            } catch { if (alive && mounted.current) patchRow(route, model, { busy: false, message: 'applyFailed:error' }) }
+          }
+          const probeRow = async (route, model) => {
+            patchRow(route, model, { busy: true, message: '', probe: undefined })
+            try {
+              const { body } = await request(DETECTOR_URL, { action: 'probe', route, model })
+              if (alive && mounted.current) patchRow(route, model, { busy: false, probe: body })
+            } catch { if (alive && mounted.current) patchRow(route, model, { busy: false, probe: { ok: false, reason: 'unreachable' } }) }
+          }
+          const probeView = (route, model, probe, busy) => {
+            if (!probe) return null
+            if (!probe.ok) return h('div', { role: 'status', style: { fontSize: 12 } }, `${t('probeFailed')}${word(`probereason${probe.reason}`, probe.reason ?? '')}`)
+            const levels = Object.entries(probe.levels ?? {}).map(([level, status]) => `${level} ${status}`).join(' · ')
+            return h('div', { role: 'status', style: { fontSize: 12 } },
+              h('div', {}, `${t(`probeverdict${probe.verdict}`)}${probe.proposal ? `: ${Object.keys(probe.proposal).join('/')}` : ''}`),
+              h('div', { style: { color: 'var(--dsw-alias-label-secondary)' } }, levels),
+              probe.baseline?.reasoned ? h('div', {}, t('probeDefaultThinks')) : null,
+              probe.validates === false ? h('div', {}, t('probeNoValidation')) : null,
+              probe.proposal ? h('button', { type: 'button', disabled: busy, onClick: () => applyRow(route, model, { efforts: probe.proposal }), style: smallButton }, t('probeApply')) : null)
+          }
+          // Offered only where nothing is configured and no source named any level.
+          const reasoningTools = (route, model, info) => {
+            if (info?.state !== 'empty' || !report?.presets) return null
+            const key = rowKey(route.route, model.id)
+            const row = rows[key] ?? {}
+            const ids = Object.keys(report.presets)
+            const picked = row.pick ?? (ids.includes(report.preset) ? report.preset : ids[0])
+            const probeable = report.probeEnabled === true && route.api === 'openai-completions'
+            return h('div', { style: { marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 } },
+              info.support === 'yes' || info.support === 'no' ? h('span', {}, t(`support${info.support}`)) : null,
+              ids.length > 0 ? h('select', { 'aria-label': t('presetPick'), value: picked, disabled: row.busy, onChange: (event) => patchRow(route.route, model.id, { pick: event.currentTarget.value }), style: { ...inputStyle, width: 'auto', padding: '3px 6px', fontSize: 12 } },
+                ...ids.map((id) => h('option', { value: id, key: id }, optionLabel('reasoningPreset', id)))) : null,
+              ids.length > 0 ? h('button', { type: 'button', disabled: row.busy || !picked, onClick: () => applyRow(route.route, model.id, { preset: picked }), style: smallButton }, t('presetApply')) : null,
+              probeable ? h('button', { type: 'button', disabled: row.busy, onClick: () => probeRow(route.route, model.id), style: smallButton }, t(row.busy && !row.message ? 'probing' : 'probe')) : null,
+              row.message ? h('span', { role: 'status' }, describe(row.message)) : null,
+              probeView(route.route, model.id, row.probe, row.busy))
+          }
           const aliasLines = (aliases) => Object.entries(aliases ?? {}).map(([from, to]) => `${from} = ${to}`).join('\n')
           const parseAliases = (text) => {
             const result = {}
@@ -304,6 +369,11 @@ window.__ModuleLoader__.load({
             return detail ? `${t(key === 'refused' ? 'refused' : key)}${detail}` : t(key)
           }
 
+          const levelsOf = (preset) => (preset?.levels ?? []).filter((level) => level !== 'off').join('/')
+          const optionLabel = (key, id) => {
+            if (key === 'reasoningPreset') return id === 'none' ? t('presetNone') : `${id} · ${levelsOf(state.presets?.[id])}`
+            return t(`strategy${id[0].toUpperCase()}${id.slice(1)}`)
+          }
           const fieldFrame = (key, control) => {
             const marked = own(overrides, key) || own(resets, key)
             return h('div', { key, style: { display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1.4fr) auto', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
@@ -322,7 +392,7 @@ window.__ModuleLoader__.load({
             h('input', { type: 'checkbox', 'data-config-key': key, 'aria-label': t(`${key}Label`), checked: shown[key] === true, disabled: !editing || busy, onChange: (event) => edit(key, event.currentTarget.checked), style: { width: 18, height: 18, accentColor: 'var(--dsw-alias-brand-primary)' } }),
             t(shown[key] === true ? 'on' : 'off')))
           const selectControl = (key, meta) => fieldFrame(key, h('select', { 'data-config-key': key, 'aria-label': t(`${key}Label`), value: shown[key] ?? '', disabled: !editing || busy, onChange: (event) => edit(key, event.currentTarget.value), style: inputStyle },
-            ...meta.values.map((id) => h('option', { value: id, key: id }, t(`strategy${id[0].toUpperCase()}${id.slice(1)}`)))))
+            ...meta.values.map((id) => h('option', { value: id, key: id }, optionLabel(key, id)))))
           const control = (key) => {
             const meta = state.fields?.[key]
             if (meta?.type === 'boolean') return toggleControl(key)
@@ -353,7 +423,8 @@ window.__ModuleLoader__.load({
                 h('div', { style: { fontWeight: 500 } }, route.route),
                 ...route.models.map((model) => h('div', { key: model.id, style: { padding: '6px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
                   h('div', {}, model.id, model.matched === true || typeof model.matched === 'string' ? ` · ${t('matched')}` : model.matched === false ? ` · ${t('unmatched')}` : ''),
-                  ...FIELD_NAMES.map((field) => h('div', { key: field, style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t(`field${field}`)}: ${cell(model.fields[field])}`)))))) : []),
+                  ...FIELD_NAMES.map((field) => h('div', { key: field, style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t(`field${field}`)}: ${cell(model.fields[field])}`)),
+                  reasoningTools(route, model, model.fields.reasoningEfforts))))) : []),
               h('div', { style: { marginTop: 12 } },
                 h('div', { style: { fontWeight: 500, marginBottom: 6 } }, t('lookup')),
                 h('div', { style: { display: 'flex', gap: 8 } },

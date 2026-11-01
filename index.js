@@ -8,6 +8,8 @@ import { configured, listingHeaders, listingUrl, readListing } from './lib/detec
 import { attachDiscovery, createDiscoveryCache, waitWithSignal } from './lib/discovery.js'
 import { readJsonResponse } from './lib/http.js'
 import { applyAlias } from './lib/names.js'
+import { cleanEfforts, describePresets, presetEfforts } from './lib/presets.js'
+import { probeModel } from './lib/probe.js'
 import { createProvenance } from './lib/provenance.js'
 import { DEFAULTS, createSettingsStore } from './lib/settings.js'
 import { loadThirdParty } from './lib/sources.js'
@@ -219,11 +221,14 @@ export function apply(ctx, rawConfig) {
       })
       if (open) third = await ensureThirdParty()
     }
+    const presetId = config.reasoningPreset
+    const presetValue = presetId === undefined || presetId === 'none' ? undefined : presetEfforts(presetId)
     return mergeDetected(providers, detected, config.overwrite === true, {
       resolve: config.catalogFallback === false ? undefined : lookup === undefined && config.catalogNumericStrategy !== 'official'
         ? undefined : (id) => resolveCatalog(lookup ?? toLookup(undefined), third, id),
       allowedFields: catalogFields,
       receiptFor, upgrade: config.upgradeWritten !== false,
+      preset: presetValue === undefined ? undefined : { id: presetId, efforts: presetValue },
     })
   }
   const targetFor = async (profile) => ({
@@ -379,7 +384,7 @@ export function apply(ctx, rawConfig) {
   // exposes an address, key or header.
   const TIER = {
     'channel-api': 'api', 'official-verified': 'official', 'original-provider-mirror': 'official',
-    'official-sibling': 'sibling', 'third-party-consensus': 'third-party', 'api-hint': 'hint', 'legacy-catalog': 'legacy',
+    'official-sibling': 'sibling', 'third-party-consensus': 'third-party', 'api-hint': 'hint', 'legacy-catalog': 'legacy', preset: 'preset', manual: 'manual',
   }
   const tierOf = (source) => TIER[source?.kind] ?? 'unknown'
   const sourcesFor = async (needThird) => {
@@ -389,7 +394,11 @@ export function apply(ctx, rawConfig) {
   }
   const summarize = (answer, field) => (answer.safe?.[field] !== undefined
     ? { state: 'found', value: answer.safe[field], tier: tierOf(answer.sources?.[field] ?? { kind: 'legacy-catalog' }), match: answer.sources?.[field]?.match ?? answer.match }
-    : { state: 'empty', reason: answer.reasons?.[field] ?? (answer.withheld?.[field] !== undefined ? 'withheld' : answer.reason ?? answer.status) })
+    : {
+      state: 'empty', reason: answer.reasons?.[field] ?? (answer.withheld?.[field] !== undefined ? 'withheld' : answer.reason ?? answer.status),
+      // For a missing level set, whether the sources at least agree that the model reasons.
+      ...field === 'reasoningEfforts' && answer.reasoningSupport !== undefined ? { support: answer.reasoningSupport.state } : {},
+    })
   const buildReport = async () => {
     const current = readProfile()
     if (current === undefined) return { ok: false, reason: 'settings-unavailable' }
@@ -416,9 +425,12 @@ export function apply(ctx, rawConfig) {
         }
         models.push({ id: model.id, matched: answer?.status === 'resolved' ? answer.identity ?? true : answer === undefined ? undefined : false, fields })
       }
-      routes.push({ route, models })
+      routes.push({ route, api: profile.api ?? 'openai-completions', models })
     }
-    return { ok: true, generatedAt: new Date().toISOString(), strategy: config.catalogNumericStrategy, routes }
+    return {
+      ok: true, generatedAt: new Date().toISOString(), strategy: config.catalogNumericStrategy, routes,
+      probeEnabled: config.probeEnabled === true, preset: config.reasoningPreset ?? 'none', presets: describePresets(),
+    }
   }
   const lookupModel = async (model) => {
     if (typeof model !== 'string' || model.trim().length === 0 || model.length > 200) return { ok: false, reason: 'invalid-model' }
@@ -436,9 +448,73 @@ export function apply(ctx, rawConfig) {
     try { await outsideTransaction(() => pump('manual-rescan')) } catch { return { ok: false, reason: 'failed' } }
     return { ok: true }
   }
+  /** Write a reasoning dictionary onto one blank model row, on the user's request. */
+  const applyReasoning = async ({ route, model, preset, efforts }) => {
+    if (disposed || config.enabled === false) return { ok: false, reason: 'disabled' }
+    if (config.dryRun === true) return { ok: false, reason: 'dry-run' }
+    if (typeof route !== 'string' || typeof model !== 'string' || route.length === 0 || model.length === 0 || route.length > 200 || model.length > 200) {
+      return { ok: false, reason: 'invalid-request' }
+    }
+    if (preset !== undefined && presetEfforts(preset) === undefined) return { ok: false, reason: 'unknown-preset' }
+    const value = preset !== undefined ? presetEfforts(preset) : cleanEfforts(efforts)
+    if (value === undefined) return { ok: false, reason: 'invalid-request' }
+    const current = readProfile()
+    if (current === undefined) return { ok: false, reason: 'settings-unavailable' }
+    const profile = Object.hasOwn(current.providers, route) ? current.providers[route] : undefined
+    const index = Array.isArray(profile?.models) ? profile.models.findIndex((entry) => entry?.id === model) : -1
+    if (index < 0) return { ok: false, reason: 'not-found' }
+    if (configured(profile.models[index].reasoningEfforts)) return { ok: false, reason: 'already-set' }
+    const providers = {
+      ...current.providers,
+      [route]: { ...profile, models: profile.models.map((entry, position) => (position === index ? { ...entry, reasoningEfforts: value } : entry)) },
+    }
+    try {
+      await outsideTransaction(() => ctx.settings.update(config.settingsNs, { providers }, current.revision))
+    } catch (error) {
+      note('apply-refused', { message: sanitizeMessage(error) })
+      return { ok: false, reason: 'refused' }
+    }
+    // A choice made by hand is the user's: the receipt keeps later passes from replacing it.
+    await provenanceStore.record([{ route, model, field: 'reasoningEfforts', value, source: { kind: 'manual' } }])
+    lastInspected = undefined
+    note('apply-reasoning', { preset: preset ?? 'custom' })
+    return { ok: true, efforts: value }
+  }
+  let probing = false
+  /** Ask one channel which reasoning levels it accepts. Off unless `probeEnabled`. */
+  const probeChannel = async ({ route, model }) => {
+    if (disposed || config.enabled === false) return { ok: false, reason: 'disabled' }
+    if (config.probeEnabled !== true) return { ok: false, reason: 'probe-disabled' }
+    if (typeof route !== 'string' || typeof model !== 'string' || route.length === 0 || model.length === 0 || route.length > 200 || model.length > 200) {
+      return { ok: false, reason: 'invalid-request' }
+    }
+    if (probing) return { ok: false, reason: 'busy' }
+    const current = readProfile()
+    if (current === undefined) return { ok: false, reason: 'settings-unavailable' }
+    const profile = Object.hasOwn(current.providers, route) ? current.providers[route] : undefined
+    if (!Array.isArray(profile?.models) || !profile.models.some((entry) => entry?.id === model)) return { ok: false, reason: 'not-found' }
+    if ((profile.api ?? 'openai-completions') !== 'openai-completions') return { ok: false, reason: 'unsupported-api' }
+    if (typeof profile.baseURL !== 'string' || !profile.baseURL.trim()) return { ok: false, reason: 'invalid-request' }
+    probing = true
+    try {
+      const target = await targetFor(profile)
+      const result = await probeModel({
+        baseURL: target.baseURL, apiKey: target.apiKey, headers: target.headers, model,
+        timeoutMs: config.timeoutMs, signal: lifetime.signal,
+      })
+      // Counts and verdicts only: no route, model, address or response text.
+      note('probe-done', { ok: result.ok, verdict: result.verdict, reason: result.reason, requests: result.requests })
+      return result
+    } catch (error) {
+      note('probe-failed', { message: sanitizeMessage(error) })
+      return { ok: false, reason: 'failed' }
+    } finally { probing = false }
+  }
   detectorApi.report = buildReport
   detectorApi.lookup = lookupModel
   detectorApi.rescan = rescan
+  detectorApi.applyReasoning = applyReasoning
+  detectorApi.probe = probeChannel
   ctx.effect(() => () => {
     disposed = true
     clearTimeout(timer)

@@ -15,7 +15,10 @@ try {
   process.exit(2)
 }
 
-const REQUIRED = ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'data/verified.json', 'README.md', 'LICENSE']
+const REQUIRED = [
+  'package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'README.md', 'LICENSE',
+  'data/verified.json', 'data/vendors.json', 'data/presets.json', 'lib/probe.js', 'lib/presets.js',
+]
 const FORBIDDEN = [
   [/^test\//, 'tests'],
   [/^scripts\//, 'maintainer scripts'],

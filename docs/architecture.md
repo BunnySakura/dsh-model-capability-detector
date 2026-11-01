@@ -12,8 +12,12 @@
 | `lib/detect.js` | 把渠道模型列表解析成能力；区分含义明确的字段与参考值 |
 | `lib/plan.js` | 按来源档位合并能力、升级判断、空字段判断 |
 | `lib/catalog.js` | models.dev 目录的下载、索引、缓存，以及旧版 `minimum` / `consensus` 策略 |
-| `lib/official.js` | 原厂记录：读取 `data/verified.json` 的核验记录，以及 models.dev 原厂镜像 |
+| `lib/official.js` | 原厂记录：读取 `data/verified.json` 的核验记录，按 `data/vendors.json` 筛选 models.dev 的原厂镜像，汇总「是否推理」 |
+| `lib/presets.js` | 读取并校验 `data/presets.json`，提供 `reasoningEfforts` 预设与字典校验 |
+| `lib/probe.js` | 可选的探测请求：向一个 OpenAI 兼容渠道试探它接受哪些推理等级 |
 | `data/verified.json` | 逐项核验过的原厂规格，随包发布 |
+| `data/vendors.json` | 原厂白名单：provider、厂商命名空间、文档地址（可带路径前缀）、模型名正则 |
+| `data/presets.json` | 推理等级预设 |
 | `scripts/` | 维护者脚本：测试入口、隐私扫描、打包清单检查、`live-probe.mjs`；不随包发布 |
 | `lib/sources.js` | OpenRouter 与 LiteLLM 的下载、索引、缓存和投票 |
 | `lib/tiers.js` | 把原厂记录与第三方来源合成一次解析，并定义来源等级 |
@@ -77,11 +81,16 @@ DSH 的发现结果结构不传递推理等级。插件在内存里缓存解析�
 | `/settings` | GET | 返回生效值、默认层、已保存覆盖项、字段范围、revision |
 | `/settings` | POST | `{ revision, set, unset }`，原子保存一组变更 |
 | `/detector` | GET | 检测报告 |
-| `/detector` | POST | `{ action: "lookup", model }` 试查；`{ action: "rescan" }` 重新检测 |
+| `/detector` | POST | `{ action: "lookup", model }` 试查；`{ action: "rescan" }` 重新检测；`{ action: "apply-reasoning", route, model, preset \| efforts }` 给一个没有等级的模型写入预设或探测建议；`{ action: "probe", route, model }` 探测渠道 |
 
 所有 POST 要求 `content-type: application/json`、自定义请求头 `x-model-capability-detector: 1`，请求体不超过 16 KiB。自定义头会触发浏览器的跨域预检，外部页面因此无法直接写入。状态码：缺少请求头 403、类型不对 415、过大 413、JSON 无效 400；设置保存的冲突 409、校验失败 400、只读 403、写盘失败 500。
 
 报告与试查只读已保存的 profile 和公开来源，不联系渠道，返回内容里没有地址、密钥或请求头。
+
+两个会改动东西的动作有各自的防护：
+
+- `apply-reasoning` 只写一个空的 `reasoningEfforts`：已有值（包括 `false`）返回 409，`dryRun` 时返回 409。字典用 `cleanEfforts` 校验，与 DSH 的要求一致（只认已知等级，除 `off` 外都要有发送值，至少一个非 `off` 的等级）。写入走 `settings.update` 带 revision，之后记一条 `manual` 回执，让后续检测不会替换它。路由只传 `route`、`model`、`preset`、`efforts` 四个字段，路由名用 `Object.hasOwn` 查找。
+- `probe` 默认拒绝（403），必须先开 `probeEnabled`。只接受 `openai-completions` 路由和该路由里已有的模型，同一时间只运行一个（否则 409）。凭据通过凭据服务取用，请求拒绝重定向，响应按字节限制读取。结果和日志只含状态、判定和请求数，不含路由名、模型名、地址、提示词或回答。渠道返回认证、限流或服务错误时立即停止，返回码对应 401/403、429、5xx 的原因，不转发渠道的错误内容。
 
 只读 Agent 工具 `model_capability_detector_updates` 与 `/updates` 共用同一份检查，只能查询。
 

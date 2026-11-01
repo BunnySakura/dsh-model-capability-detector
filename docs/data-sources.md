@@ -12,12 +12,14 @@
 
 | 等级 | 来源种类 | 说明 |
 |---|---|---|
-| 6 | `channel-api` | 渠道模型列表里含义明确的字段 |
-| 5 | `official-verified` | 内置、逐项核验过的原厂规格 |
-| 4 | `original-provider-mirror` | models.dev 中带原厂文档域名的原厂记录 |
-| 3 | `official-sibling` | 无快照后缀的名字，从同一厂商带日期快照的原厂记录推断，仅限推理等级 |
-| 2 | `third-party-consensus` | OpenRouter、LiteLLM、models.dev 中至少两家一致的值 |
-| 1 | `api-hint` | `max_input_tokens`、`max_tokens` 这类含义不明的字段 |
+| 99 | `manual` | 你在设置页里手动套用的值，插件永远不替换 |
+| 7 | `channel-api` | 渠道模型列表里含义明确的字段 |
+| 6 | `official-verified` | 内置、逐项核验过的原厂规格 |
+| 5 | `original-provider-mirror` | models.dev 中带原厂文档域名的原厂记录 |
+| 4 | `official-sibling` | 无快照后缀的名字，从同一厂商带日期快照的原厂记录推断，仅限推理等级 |
+| 3 | `third-party-consensus` | OpenRouter、LiteLLM、models.dev 中至少两家一致的值 |
+| 2 | `api-hint` | `max_input_tokens`、`max_tokens` 这类含义不明的字段 |
+| 1 | `preset` | 来源一致认为模型会推理、却没有等级时，按 `reasoningPreset` 填入的预设，仅限推理等级 |
 | 0 | `legacy-catalog` | 旧版 `minimum`、`consensus` 策略得到的目录值 |
 
 已有的值默认保留，除非开启 `overwrite`，或满足下面的升级条件。
@@ -47,7 +49,51 @@
 
 ### models.dev 原厂镜像
 
-满足下面全部条件的 models.dev 记录才算原厂记录：provider 的 `id` 与厂商键一致；`doc` 是 https 地址、无账号密码、主机名在白名单内；记录的 `canonical_model_id` 没有指向其他厂商。白名单覆盖 DeepSeek、OpenAI、Anthropic、Google、xAI、Mistral、Cohere、Moonshot 和智谱，未识别的厂商不会被当作原厂。
+满足下面全部条件的 models.dev 记录才算原厂记录：provider 的 `id` 与白名单里的 `provider` 一致；`doc` 是 https 地址、无账号密码，主机名（和路径前缀，如果写了）在白名单内；记录的 `canonical_model_id` 没有指向其他厂商。没有 `canonical_model_id` 的记录，要么该行没写 `models`，要么模型名匹配它。未识别的厂商不会被当作原厂。
+
+### 原厂白名单
+
+白名单是数据文件 [data/vendors.json](../data/vendors.json)，代码不含任何厂商名。新模型厂商出现或域名变了，只改这个文件，提交里一眼能看出是在维护白名单。每行：
+
+| 字段 | 含义 |
+|---|---|
+| `vendor` | 厂商命名空间，对应 `canonical_model_id` 的前缀。同一厂商的多个 provider 写同一个值，如 `zhipuai` 与 `zai` |
+| `provider` | models.dev 里的 provider id |
+| `docs` | 能证明这条记录来自原厂的文档地址。`host` 只比主机名，`host/path` 同时要求路径以该前缀开头（前缀后面必须是 `/` 或结束） |
+| `models` | 可选的正则。没有 `canonical_model_id` 的记录，模型名必须匹配它，用来挡掉该平台上托管的其他厂商的模型 |
+
+当前覆盖 OpenAI、Anthropic、DeepSeek、Google（Gemini）、xAI（Grok）、智谱（GLM）、月之暗面（Kimi）、阿里云（Qwen），以及原有的 Mistral、Cohere。同一厂商的两个 provider 对某个字段给出不同的值时（例如国内外区域的上下文长度不同），该字段不填。
+
+`test/reasoning.test.mjs` 检查这份文件：上面八家都在，每个 provider 只列一次，格式非法的行会被丢弃而不是放宽信任。
+
+### 推理等级为什么常常是空的
+
+`reasoningEfforts` 要的是「等级名加发送值」。能给出它的只有渠道列表、原厂记录和同系快照推断。第三方来源不给等级，因为各家转售商对同一个模型写出的等级互相矛盾。大量模型的原厂记录也只写了开关或 token 预算，没有等级，例如智谱 17 个推理模型里 13 个只有开关。
+
+DSH 对没有 `reasoningEfforts` 的模型，取内置目录里同名模型的设置，找不到就当作不推理，界面不提供等级选项，也不发送推理参数。
+
+因此插件把两件事分开：
+
+- **是否推理**（`reasoningSupport`）：原厂记录单独就能决定，包括只有开关或预算的；否则至少两家第三方（OpenRouter 的 `supported_parameters`、LiteLLM 的 `supports_reasoning`、models.dev 的 `reasoning`）一致，才给出「是」或「否」。某个来源没有写，不算「否」。
+- **有哪些等级**（`reasoningEfforts`）：照旧只来自渠道 API 和原厂记录。
+
+### 预设
+
+[data/presets.json](../data/presets.json) 里是几套完整的 `reasoningEfforts`：`openai`（low/medium/high）、`extended`（再加 xhigh）、`deepseek`（low/high/max）、`toggle`（只有开和关）。预设是对渠道可接受取值的猜测，所以：
+
+- 默认不自动套用。`reasoningPreset` 设成某一套后，只有在「来源认为模型会推理」且没有任何等级来源、原厂记录之间也没有分歧时才填，来源档位是 `preset`，等级最低，之后出现任何真实来源都会升级替换。
+- 在检测报告里，对没有等级的模型可以手动选一套套用。手动套用的来源档位是 `manual`，永远不会被替换。
+- DSH 会把 `high` 这样的值作为 `reasoning_effort` 发给网关。DSH 认得的网关（DeepSeek、智谱、Together、OpenRouter 等）会自动换成各自的参数格式；其他自定义网关统一走 `reasoning_effort`。通义千问等需要 `enable_thinking` 的网关，要靠 DSH 的 `compat.thinkingFormat`，本插件不设置它。
+
+### 探测请求
+
+默认关闭。打开 `probeEnabled` 后，报告里 OpenAI 兼容对话渠道的模型会出现「探测渠道」按钮。一次探测发约 8 个极小的对话请求（计费，每个最多 256 个输出 token），固定提示词，只报告状态，不返回提示、回答、地址或密钥：
+
+1. 不带等级的请求，看模型是否默认就推理。
+2. 带一个无效等级的请求，看渠道是否校验这个参数。接受任何等级的渠道，接受一个真实等级什么也说明不了。
+3. 逐个试 minimal、low、medium、high、xhigh、max。
+
+只有「渠道接受，并且返回里出现推理 token 或推理文本」的等级才进入建议；模型默认就推理且渠道不校验时，只给出「无法判断」。建议要你点击才会写入，来源档位是 `manual`。同一时间只运行一个探测，渠道返回错误就立即停止。
 
 models.dev 是社区镜像，插件不会逐次抓取并核对每个官网字段。同一模型的多条原厂记录对某字段取值不同时，该字段不填。
 
@@ -127,21 +173,23 @@ LiteLLM 只读 `mode` 为 `chat`、`responses`、`completion` 的条目。同一
 - 当前值与回执里的值相同（说明没有被用户改过）；
 - 回执的等级低于新候选的等级。
 
-回执等级低于 5（原厂核验）的字段会让一次检测「值得做」，即使没有空字段。值相同但来源更强时，只更新回执，不改配置。没有回执的值，包括旧版本写入的，一律按用户手填处理。
+回执等级低于原厂核验的字段会让一次检测「值得做」，即使没有空字段。值相同但来源更强时，只更新回执，不改配置。没有回执的值，包括旧版本写入的，一律按用户手填处理。
 
 ## 缓存
 
 | 文件 | 内容 | 版本 |
 |---|---|---|
-| `catalog.json` | models.dev 目录索引 | 5 |
-| `thirdparty.json` | OpenRouter 与 LiteLLM 的紧凑索引 | 1 |
+| `catalog.json` | models.dev 目录索引 | 6 |
+| `thirdparty.json` | OpenRouter 与 LiteLLM 的紧凑索引 | 2 |
 | `provenance.json` | 来源回执 | 1 |
 
 均位于 `$DSH_HOME/cache/model-capability-detector/`。目录与第三方索引的有效期都是 `catalogTtlMs`，默认 7 天。刷新失败时，同一来源的旧缓存可继续使用，并在下一轮重试。时间戳晚于当前时间的缓存视为不新鲜。目录缓存只保存源地址的哈希。
 
 第三方响应的字节上限分别是 OpenRouter 8 MiB、LiteLLM 12 MiB。
 
-两个第三方来源的地址可用 `openrouterUrl`、`litellmUrl` 改成镜像。缓存条目记录地址的 SHA-256 前 16 位，地址变了就不复用旧快照，也不会把镜像的快照当成默认地址的数据。没有这个字段的旧条目视为默认地址的快照，所以缓存版本仍是 1。无效地址（非 http(s)、含凭据）在 Host 侧回退到默认地址。
+两个第三方来源的地址可用 `openrouterUrl`、`litellmUrl` 改成镜像。缓存条目记录地址的 SHA-256 前 16 位，地址变了就不复用旧快照，也不会把镜像的快照当成默认地址的数据。没有这个字段的旧条目视为默认地址的快照。无效地址（非 http(s)、含凭据）在 Host 侧回退到默认地址。
+
+两份缓存的版本在加入「是否推理」信号时各升了一级，旧缓存因此在下一轮重新下载。
 
 ## 已知限制
 
