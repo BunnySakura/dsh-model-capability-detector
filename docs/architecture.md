@@ -20,6 +20,7 @@
 | `lib/discovery.js` | 对 `llm.discoverModels` 的可卸载包装与短期内存缓存 |
 | `lib/diagnostics.js` | 脱敏与 JSONL 诊断日志 |
 | `lib/http.js` | 按字节限制读取 JSON 响应 |
+| `lib/fsutil.js` | 先写临时文件再重命名的原子写入，缓存、回执和设置共用 |
 | `lib/update-host.js` | Host 路由与只读 Agent 工具 |
 | `lib/updates.js` | GitHub Releases 检查 |
 

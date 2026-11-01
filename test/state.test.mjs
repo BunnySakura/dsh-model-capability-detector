@@ -47,6 +47,7 @@ test('receipt journal serializes writes without storing private route or endpoin
     t.mock.method(fs, 'readFile', async () => { if (!stored) throw new Error('absent'); return stored }),
     t.mock.method(fs, 'mkdir', async () => {}),
     t.mock.method(fs, 'writeFile', async (_path, text) => { stored = text }),
+    t.mock.method(fs, 'rename', async () => undefined),
   ]
   syncBuiltinESMExports()
   try {

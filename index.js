@@ -1,5 +1,4 @@
 /** Automatic capability detection for user-owned provider configurations. */
-/** Automatic capability detection for user-owned provider configurations. */
 import { isAbsolute, join } from 'node:path'
 import { format } from 'node:util'
 
@@ -379,7 +378,7 @@ export function apply(ctx, rawConfig) {
   // exposes an address, key or header.
   const TIER = {
     'channel-api': 'api', 'official-verified': 'official', 'original-provider-mirror': 'official',
-    'third-party-consensus': 'third-party', 'api-hint': 'hint', 'legacy-catalog': 'legacy',
+    'official-sibling': 'sibling', 'third-party-consensus': 'third-party', 'api-hint': 'hint', 'legacy-catalog': 'legacy',
   }
   const tierOf = (source) => TIER[source?.kind] ?? 'unknown'
   const sourcesFor = async (needThird) => {

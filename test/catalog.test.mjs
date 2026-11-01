@@ -421,6 +421,7 @@ async function withMemoryCache(t, run) {
     }),
     t.mock.method(fs, 'mkdir', async () => undefined),
     t.mock.method(fs, 'writeFile', async (_path, text) => { stored = text }),
+    t.mock.method(fs, 'rename', async () => undefined),
     t.mock.method(globalThis, 'fetch', async (url, options) => {
       calls.push({ url, options })
       return response(url, options)

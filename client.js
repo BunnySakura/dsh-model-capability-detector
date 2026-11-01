@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
         rescan: 'Detect again now', rescanning: 'Detecting…', rescanDone: 'Detection finished. Show the report again to see the result.', rescanFailed: 'Detection did not run (the plugin may be disabled).',
         lookup: 'Look up a model name', lookupPlaceholder: 'Model name as the channel lists it', lookupRun: 'Look up', lookupFailed: 'Look-up failed.', matched: 'Matched', unmatched: 'No original record', aliased: 'via alias', votes: 'Third-party sources',
         fieldcontextWindow: 'Context window', fieldmaxTokens: 'Max output', fieldinput: 'Input', fieldreasoningEfforts: 'Reasoning', stateEmpty: 'Empty',
-        tierapi: 'Channel API', tierofficial: 'Original provider', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you',
+        tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you',
         'reasonno-original-record': 'No original-provider record', 'reasonnot-disclosed-by-original': 'Original record does not state it', 'reasonoriginal-records-disagree': 'Original records disagree',
         'reasonno-third-party-data': 'No third-party data', 'reasonsingle-third-party-source': 'Only one third-party source', 'reasonthird-party-conflict': 'Third-party sources disagree',
         'reasoncatalog-disabled': 'Public sources are off', 'reasonfield-disabled': 'This field is not filled from sources', reasonwithheld: 'Withheld: sources disagree', reasonunknown: 'Model not found', reasonambiguous: 'Name matches several models',        strategyOfficial: 'Original-provider specifications (recommended)', strategyMinimum: 'Legacy: minimum across matching publishers', strategyConsensus: 'Legacy: accept numbers only when publishers agree',
@@ -103,7 +103,7 @@ window.__ModuleLoader__.load({
         rescan: '立即重新检测', rescanning: '检测中…', rescanDone: '检测完成。再次点击“查看报告”可看到结果。', rescanFailed: '检测没有运行（插件可能已关闭）。',
         lookup: '试查模型名', lookupPlaceholder: '渠道里列出的模型名', lookupRun: '查询', lookupFailed: '查询失败。', matched: '已匹配', unmatched: '没有原厂记录', aliased: '经别名', votes: '第三方来源',
         fieldcontextWindow: '上下文窗口', fieldmaxTokens: '最大输出', fieldinput: '输入', fieldreasoningEfforts: '推理', stateEmpty: '空',
-        tierapi: '渠道 API', tierofficial: '原厂', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置',
+        tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置',
         'reasonno-original-record': '没有原厂记录', 'reasonnot-disclosed-by-original': '原厂记录未给出', 'reasonoriginal-records-disagree': '原厂记录不一致',
         'reasonno-third-party-data': '没有第三方数据', 'reasonsingle-third-party-source': '只有一家第三方来源', 'reasonthird-party-conflict': '第三方来源不一致',
         'reasoncatalog-disabled': '公开来源已关闭', 'reasonfield-disabled': '此字段不从来源填写', reasonwithheld: '来源不一致，未填', reasonunknown: '没找到该模型', reasonambiguous: '名称对应多个模型',        strategyOfficial: '原厂规格（推荐）', strategyMinimum: '旧版：匹配发布者中取最小值', strategyConsensus: '旧版：发布者数值一致时才填写',
@@ -290,7 +290,7 @@ window.__ModuleLoader__.load({
             if (info.state === 'empty') return `${t('stateEmpty')} · ${word(`reason${info.reason}`, info.reason ?? '')}`
             const value = Array.isArray(info.value) ? info.value.join('+') : typeof info.value === 'object' && info.value !== null ? Object.keys(info.value).join('/') : info.value === false ? t('off') : String(info.value)
             const tier = info.tier ? word(`tier${info.tier}`, info.tier) : ''
-            return `${value}${tier ? ` · ${tier}` : ''}${info.match === 'family' ? ' ≈' : ''}`
+            return `${value}${tier ? ` · ${tier}` : ''}${info.match === 'family' || info.match === 'sibling' ? ' ≈' : ''}`
           }
           const describe = (code) => {
             const [key, detail] = [code.split(':')[0], code.includes(':') ? code.slice(code.indexOf(':') + 1) : '']

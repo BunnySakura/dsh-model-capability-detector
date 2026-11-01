@@ -76,7 +76,7 @@ Each field takes the first available value from this list; higher entries win:
 3. **Third-party consensus:** a value is used when at least two of OpenRouter, LiteLLM and models.dev agree. Numbers within 5% of each other agree and the smaller one is used.
 4. **API hints:** `max_input_tokens` and `max_tokens` mean different things across gateways, so they are used only when nothing above has a value.
 
-Reasoning levels come only from the provider API and original-provider records. An original specification describes the model itself and **does not guarantee a third-party provider exposes the same limits**.
+Reasoning levels come only from the provider API and original-provider records. If the provider lists `deepseek-v4.1-flash` while the original provider only documents the dated `deepseek-v4.1-flash-1017`, and every dated snapshot of that vendor states the same levels, the levels are inferred and shown as "Same-line snapshots" in the report. Context window and maximum output are never inferred this way. An original specification describes the model itself and **does not guarantee a third-party provider exposes the same limits**.
 
 When a model name does not match, add one line per alias under **Model name aliases** in the form `provider's name = standard model name`. Aliases match exactly and never chain.
 
