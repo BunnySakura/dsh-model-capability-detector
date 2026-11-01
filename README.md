@@ -44,6 +44,8 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 | `catalogNumbers` | `true` | 允许公开来源补上下文和最大输出 |
 | `catalogNumericStrategy` | `official` | `official` 为分档取值；`minimum`、`consensus` 为旧版兼容模式 |
 | `thirdPartySources` | `true` | 允许参考 OpenRouter 和 LiteLLM |
+| `openrouterUrl` | `https://openrouter.ai/api/v1/models` | OpenRouter 模型列表地址。默认地址访问不了时可改成镜像，只接受不含凭据的 http(s) |
+| `litellmUrl` | LiteLLM 仓库里的 `model_prices_and_context_window.json` | LiteLLM 模型表地址，规则同上 |
 | `upgradeWritten` | `true` | 出现更强来源时升级插件早先写入的值 |
 | `modelAliases` | `{}` | 模型名别名，格式见下文 |
 | `catalogUrl` | `https://models.dev/api.json` | models.dev 目录地址，只接受不含凭据的 http(s) |
@@ -100,6 +102,8 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 
 ## 常见问题
 
+**为什么设置页没有「更新」按钮，只有一段说明？** 当前运行的是链接到开发目录的副本（profile 里写成 `link:路径`）。让插件管理器更新这样的副本，会替换链接指向的目录，可能删除其中的文件。请在该目录里用 git 拉取对应标签，或把 profile 里的 `link:` 改成 GitHub 地址安装。
+
 **为什么有的值我没改过却变了？** 插件早先用较弱来源写入的值，出现更强来源时会自动升级。你手填或改过的值不会动。在设置里关闭「升级插件写入的值」可禁止升级。
 
 **怎么让它覆盖已有值？** 打开 `overwrite`，或先清空那个字段再保存。
@@ -111,7 +115,7 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 ## 隐私与网络
 
 - **渠道请求**：向你配置的渠道发 `GET {baseURL}/models`（Anthropic 为 `/v1/models`）。API key 通过 DSH 的凭据服务即时取用，请求拒绝重定向。
-- **公开来源**：models.dev 目录、`openrouter.ai/api/v1/models`、GitHub 上 LiteLLM 的 `model_prices_and_context_window.json`。请求不带任何凭据和用户数据，响应有大小上限。
+- **公开来源**：models.dev 目录、`openrouter.ai/api/v1/models`、GitHub 上 LiteLLM 的 `model_prices_and_context_window.json`。OpenRouter 和 LiteLLM 的地址可以换成镜像。请求不带任何凭据和用户数据，响应有大小上限。
 - **更新检查**：默认关闭。开启后只访问本项目的 GitHub Releases。
 - **本地文件**，都在 `$DSH_HOME` 下，不含密钥、渠道地址和请求头：
   - `cache/model-capability-detector/` 里是公开来源缓存和来源回执。回执用来判断某个值是不是插件写的，其中路由名和模型名已做哈希。

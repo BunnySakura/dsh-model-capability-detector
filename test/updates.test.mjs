@@ -251,6 +251,42 @@ test('the page refuses an install target outside the fixed repository', async ()
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('a linked development copy shows a notice and offers no update button', async () => {
+  let definition, Component
+  let cursor = 0
+  const hooks = [], effects = [], installs = []
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }] },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => new URL(url).pathname.endsWith('/settings')
+    ? Response.json({ ok: true, revision: 'r', writable: true, defaults: {}, overrides: {}, effective: {}, fields: {} })
+    : Response.json({ status: 'checked', available: true, version: '9.9.9', linked: true,
+      installTarget: 'git+https://github.com/BunnySakura/dsh-model-capability-detector.git#9.9.9' })
+  try {
+    runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+      window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+      document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+    })
+    definition.factory(() => React).apply({
+      effect: () => {}, locale: { register() {}, bind: () => (key) => key },
+      get: () => ({ installBundle: async (...args) => { installs.push(args); return { ok: true, value: {} } } }),
+      slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component } },
+    })
+    const page = Component({ view: 'page' })
+    const render = () => { cursor = 0; return page.type(page.props) }
+    const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+    render(); await new Promise((resolve) => setTimeout(resolve, 20))
+    const nodes = flatten(render())
+    assert.equal(nodes.some((node) => node.type === 'button' && node.children.includes('update')), false, 'no update button')
+    assert.ok(nodes.some((node) => node.children?.includes('linkedNotice')), 'the reason is shown')
+    assert.equal(installs.length, 0)
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('the settings page edits aliases and shows the detection report and look-up', async () => {
   let definition, Component
   let cursor = 0

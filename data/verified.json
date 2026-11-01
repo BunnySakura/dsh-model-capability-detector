@@ -1,0 +1,19 @@
+[
+  {
+    "vendor": "deepseek",
+    "id": "deepseek-v4.1-flash-1017",
+    "canonical": "deepseek/deepseek-v4.1-flash-1017",
+    "doc": "https://api-docs.deepseek.com/news/news261017",
+    "urls": [
+      "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json",
+      "https://api-docs.deepseek.com/api/create-chat-completion/"
+    ],
+    "safe": {
+      "contextWindow": 1048576,
+      "maxTokens": 393216,
+      "input": ["text", "image"],
+      "reasoningEfforts": { "off": null, "low": "low", "high": "high", "max": "max" }
+    },
+    "updated": "2026-10-31"
+  }
+]

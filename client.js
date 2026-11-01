@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
     const INSTALL_SPEC = /^git\+https:\/\/github\.com\/BunnySakura\/dsh-model-capability-detector\.git#v?\d+\.\d+\.\d+$/
     const FIELD_GROUPS = [
       { id: 'detection', fields: ['enabled', 'settingsNs', 'discoveryTrigger', 'timeoutMs', 'debounceMs', 'startupDelayMs', 'maxResponseBytes'] },
-      { id: 'fallback', fields: ['catalogFallback', 'catalogUrl', 'catalogTimeoutMs', 'catalogMaxBytes', 'catalogTtlMs', 'catalogNumbers', 'catalogNumericStrategy', 'thirdPartySources', 'upgradeWritten', 'modelAliases', 'overwrite', 'dryRun'] },
+      { id: 'fallback', fields: ['catalogFallback', 'catalogUrl', 'catalogTimeoutMs', 'catalogMaxBytes', 'catalogTtlMs', 'catalogNumbers', 'catalogNumericStrategy', 'thirdPartySources', 'openrouterUrl', 'litellmUrl', 'upgradeWritten', 'modelAliases', 'overwrite', 'dryRun'] },
       { id: 'diagnostics', fields: ['logging', 'logFile'] },
     ]
     const LABELS = {
@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
         updateWarning: 'DSH will install this tagged version for this profile. The plugin manager controls compatibility, install scripts and the final result.',
         installing: 'Installing…', installApplied: 'Updated. Reload this page if the version shown here does not change.', installRestart: 'Installed. Restart DSH to finish loading the new version.',
         installFailed: 'The plugin manager did not install the update: ', installBuilds: 'The update needs install-script approval. Approve it from Plugins, then try again.',
+        linkedNotice: 'This copy runs from a linked development folder. Updating through the plugin manager would replace that folder and can delete files in it, so the update button is hidden. Update it with git (pull the tag) instead.',
         installUnknown: 'The result is unknown. Open Plugins to check the installed version.', installNoManager: 'The plugin manager is unavailable here. Install the target below from Plugins → Add plugin.', installRefused: 'This update target was refused because it is not the fixed project repository.',
         enabledLabel: 'Enable capability detection', enabledHint: 'Turn the background detection and Models-page enrichment on or off.',
         settingsNsLabel: 'Model settings namespace', settingsNsHint: 'Settings namespace containing provider profiles.',
@@ -53,6 +54,8 @@ window.__ModuleLoader__.load({
         logFileLabel: 'Diagnostic log file', logFileHint: 'Optional path inside DSH home (for example logs/detector.log). A non-empty path also enables Host logging.',
         updateCheckOnStartupLabel: 'Check for updates at startup', updateCheckOnStartupHint: 'Check the latest stable version shortly after startup. Off by default.',
         thirdPartySourcesLabel: 'Use third-party sources', thirdPartySourcesHint: 'When original records have no value, use OpenRouter, LiteLLM and models.dev, but only values at least two of them agree on.',
+        openrouterUrlLabel: 'OpenRouter model list URL', openrouterUrlHint: 'Public model list (http or https, no credentials). Point it at a mirror if the default is unreachable.',
+        litellmUrlLabel: 'LiteLLM model table URL', litellmUrlHint: 'Public model_prices_and_context_window.json (http or https, no credentials). Point it at a mirror if the default is unreachable.',
         upgradeWrittenLabel: 'Upgrade values this plugin wrote', upgradeWrittenHint: 'Replace a value the plugin filled from a weaker source once a stronger one appears. Values you typed are never changed.',
         modelAliasesLabel: 'Model name aliases', modelAliasesHint: 'One per line: channel name = standard model name (for example my-gateway-gpt = gpt-4o). Used when looking up original and third-party records.',
         report: 'Detection report', reportLoad: 'Show report', reportLoading: 'Loading…', reportEmpty: 'No providers with models are configured.', reportFailed: 'Could not build the report.', reportNote: 'Built from your saved providers and the public sources. No channel is contacted and no address or key is shown.',
@@ -76,6 +79,7 @@ window.__ModuleLoader__.load({
         updateWarning: 'DSH 将为此 profile 安装该固定版本。兼容性、安装脚本和最终结果均由插件管理器控制。',
         installing: '安装中…', installApplied: '已更新。若此处版本号没有变化，请刷新页面。', installRestart: '已安装。请重启 DSH 以完成新版本加载。',
         installFailed: '插件管理器未能安装更新：', installBuilds: '该更新需要批准安装脚本。请在“插件”页批准后重试。',
+        linkedNotice: '当前运行的是链接到开发目录的副本。通过插件管理器更新会替换该目录，并可能删除其中的文件，因此已隐藏更新按钮。请用 git 拉取对应标签来更新。',
         installUnknown: '结果未知。请打开“插件”页确认已安装版本。', installNoManager: '此处无法使用插件管理器。请到“插件 → 添加插件”安装下方目标。', installRefused: '更新目标不是固定的项目仓库，已被拒绝。',
         enabledLabel: '启用能力检测', enabledHint: '开启或关闭后台检测与模型页增强。',
         settingsNsLabel: '模型设置命名空间', settingsNsHint: '保存渠道配置的设置命名空间。',
@@ -97,6 +101,8 @@ window.__ModuleLoader__.load({
         logFileLabel: '诊断日志文件', logFileHint: '可选，DSH 主目录内的路径（如 logs/detector.log）。非空时也会启用 Host 日志。',
         updateCheckOnStartupLabel: '启动时检查更新', updateCheckOnStartupHint: '启动后不久检查最新稳定版，默认关闭。',
         thirdPartySourcesLabel: '使用第三方来源', thirdPartySourcesHint: '原厂记录没有值时，参考 OpenRouter、LiteLLM 和 models.dev，且只采用至少两家一致的值。',
+        openrouterUrlLabel: 'OpenRouter 模型列表 URL', openrouterUrlHint: '公开模型列表（http 或 https，不含凭据）。默认地址访问不了时，改成镜像地址。',
+        litellmUrlLabel: 'LiteLLM 模型表 URL', litellmUrlHint: '公开的 model_prices_and_context_window.json（http 或 https，不含凭据）。默认地址访问不了时，改成镜像地址。',
         upgradeWrittenLabel: '升级插件写入的值', upgradeWrittenHint: '插件曾用较弱来源填写的值，出现更强来源时自动替换。你手填的值永不改动。',
         modelAliasesLabel: '模型名别名', modelAliasesHint: '每行一条：渠道里的名字 = 标准模型名（例如 my-gateway-gpt = gpt-4o）。查询原厂和第三方记录时使用。',
         report: '检测报告', reportLoad: '查看报告', reportLoading: '加载中…', reportEmpty: '没有配置带模型的渠道。', reportFailed: '无法生成报告。', reportNote: '依据已保存的渠道和公开来源生成，不会联系渠道，也不显示地址或密钥。',
@@ -236,6 +242,7 @@ window.__ModuleLoader__.load({
           const finishInstall = (key, detail) => { if (alive && mounted.current) { setInstalling(false); setInstallMessage(detail ? `${key}:${detail}` : key) } }
           const installUpdate = async () => {
             setConfirming(false)
+            if (updateState.linked === true) { setInstallMessage('linkedNotice'); return }
             const spec = updateState.installTarget
             if (typeof spec !== 'string' || !INSTALL_SPEC.test(spec)) { setInstallMessage('installRefused'); return }
             const manager = pluginManager()
@@ -320,7 +327,7 @@ window.__ModuleLoader__.load({
             const meta = state.fields?.[key]
             if (meta?.type === 'boolean') return toggleControl(key)
             if (meta?.type === 'enum') return selectControl(key, meta)
-            if (meta?.type === 'aliases') return fieldFrame(key, h('textarea', { 'data-config-key': key, rows: 4, value: aliasText ?? aliasLines(shown[key]), disabled: !editing || busy, style: { ...inputStyle, fontFamily: 'monospace' }, 'aria-label': t(`Label`), onChange: (event) => { setAliasText(event.currentTarget.value); edit(key, parseAliases(event.currentTarget.value)) } }))
+            if (meta?.type === 'aliases') return fieldFrame(key, h('textarea', { 'data-config-key': key, rows: 4, value: aliasText ?? aliasLines(shown[key]), disabled: !editing || busy, style: { ...inputStyle, fontFamily: 'monospace' }, 'aria-label': t(`${key}Label`), onChange: (event) => { setAliasText(event.currentTarget.value); edit(key, parseAliases(event.currentTarget.value)) } }))
             if (meta?.type === 'integer') return textControl(key, 'number', meta)
             return textControl(key, meta?.type === 'url' ? 'url' : 'text', meta)
           }
@@ -367,8 +374,9 @@ window.__ModuleLoader__.load({
               updateState.notes ? h('details', {}, h('summary', {}, t('release')), h('pre', { style: { whiteSpace: 'pre-wrap', font: 'inherit', maxHeight: 240, overflow: 'auto' } }, updateState.notes)) : null,
               h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
                 h('button', { type: 'button', disabled: checking || installing, onClick: check, style: secondaryButton }, t(checking ? 'checking' : 'check')),
-                updateState.available && !confirming ? h('button', { type: 'button', disabled: installing, onClick: () => setConfirming(true), style: primaryButton }, t(installing ? 'installing' : 'update')) : null),
-              confirming ? h('div', { role: 'group', 'aria-label': t('confirm'), style: { marginTop: 12, padding: 12, background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 8 } },
+                updateState.available && !confirming && updateState.linked !== true ? h('button', { type: 'button', disabled: installing, onClick: () => setConfirming(true), style: primaryButton }, t(installing ? 'installing' : 'update')) : null),
+              updateState.linked === true ? h('p', { role: 'status' }, t('linkedNotice')) : null,
+              confirming && updateState.linked !== true ? h('div', { role: 'group', 'aria-label': t('confirm'), style: { marginTop: 12, padding: 12, background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 8 } },
                 h('p', {}, t('updateWarning')),
                 h('code', { style: { display: 'block', overflowWrap: 'anywhere' } }, updateState.installTarget),
                 h('button', { type: 'button', onClick: installUpdate, style: primaryButton }, t('confirm')),

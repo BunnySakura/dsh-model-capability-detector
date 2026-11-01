@@ -1,0 +1,15 @@
+title = "dsh-model-capability-detector"
+
+[extend]
+# Keep every default rule; the allowlist below is the only exception.
+useDefault = true
+
+# test/diagnostics.test.mjs feeds this made-up value through the log redaction
+# code to prove it never reaches a log. It is not a credential. The exception is
+# limited to one rule and one exact value, so a real key in the same file is
+# still reported.
+[[allowlists]]
+description = "fake key used as redaction test input"
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^sk-live-abcdef0123456789$'''] # privacy-scan: allow (fake redaction fixture)

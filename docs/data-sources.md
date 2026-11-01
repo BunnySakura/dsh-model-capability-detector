@@ -41,9 +41,9 @@
 
 ### 内置核验记录
 
-`lib/official.js` 内置了经核验的 DeepSeek-V4.1-Flash-1017：上下文 1048576、最大输出 393216、支持图片输入，推理等级 `off / low / high / max`。出处是官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和 [API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期 2026-10-31。它在公开来源不可用时仍然可用，且只匹配精确的快照 ID，不套用到浮动别名或其他快照。
+经核验的记录放在 `data/verified.json`，由 `lib/official.js` 读取。当前内有 DeepSeek-V4.1-Flash-1017：上下文 1048576、最大输出 393216、支持图片输入，推理等级 `off / low / high / max`。出处是官方[发布页](https://api-docs.deepseek.com/news/news261017/)、其链接的[固定快照配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json)和 [API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)，核验日期 2026-10-31。它在公开来源不可用时仍然可用，且只匹配精确的快照 ID，不套用到浮动别名或其他快照。
 
-新增核验记录时，需要同时有发布页、固定版本的配置或文档、API 文档三处出处，并写明核验日期。
+新增核验记录时，需要同时有发布页、固定版本的配置或文档、API 文档三处出处，并写明核验日期。`official.test.mjs` 会检查每条记录：三个互不相同的 https 出处、日期格式、`canonical` 以自己的厂商开头、输出不超过上下文。不满足则测试失败。
 
 ### models.dev 原厂镜像
 
@@ -140,6 +140,8 @@ LiteLLM 只读 `mode` 为 `chat`、`responses`、`completion` 的条目。同一
 均位于 `$DSH_HOME/cache/model-capability-detector/`。目录与第三方索引的有效期都是 `catalogTtlMs`，默认 7 天。刷新失败时，同一来源的旧缓存可继续使用，并在下一轮重试。时间戳晚于当前时间的缓存视为不新鲜。目录缓存只保存源地址的哈希。
 
 第三方响应的字节上限分别是 OpenRouter 8 MiB、LiteLLM 12 MiB。
+
+两个第三方来源的地址可用 `openrouterUrl`、`litellmUrl` 改成镜像。缓存条目记录地址的 SHA-256 前 16 位，地址变了就不复用旧快照，也不会把镜像的快照当成默认地址的数据。没有这个字段的旧条目视为默认地址的快照，所以缓存版本仍是 1。无效地址（非 http(s)、含凭据）在 Host 侧回退到默认地址。
 
 ## 已知限制
 

@@ -1,5 +1,5 @@
 /** Read-only probe of a public OpenAI-compatible listing; no credentials read.
- * Run: node test/live-probe.mjs [baseURL]
+ * Run: node scripts/live-probe.mjs [baseURL]
  */
 import { listingUrl, readListing } from '../lib/detect.js'
 import { redactUrl, sanitizeMessage } from '../lib/diagnostics.js'

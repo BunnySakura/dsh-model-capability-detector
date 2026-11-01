@@ -2,6 +2,25 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0]
+
+### 新增与变更
+
+- 新增设置项 `openrouterUrl`、`litellmUrl`，OpenRouter 与 LiteLLM 的地址可以换成镜像，设置页可改。无法访问默认地址的网络下，第三方两家一致的规则因此仍可用。地址须是不含凭据的 http(s)，Host 侧遇到无效值回退到默认地址。
+- 第三方缓存条目记录地址的哈希：换地址后不复用旧快照，也不把镜像的快照当成默认地址的数据。旧缓存按默认地址处理，无需重新下载。
+- 内置核验记录移到 `data/verified.json`，随包发布。新增测试检查每条记录：三个互不相同的 https 出处、核验日期、`canonical` 属于自己的厂商、输出不超过上下文。
+- 测试入口改为 `scripts/run-tests.mjs`，自己列出测试文件，不依赖 shell 展开通配符，Windows 与 Node 20 到 24 行为一致。`live-probe.mjs` 移到 `scripts/`，不再位于测试目录。
+- 新增 `scripts/privacy-scan.mjs`（发布前扫描凭据、本机路径、私钥、个人邮箱，只输出位置不输出内容）和 `scripts/check-pack.mjs`（检查打包清单），以及运行测试、扫描与 gitleaks 的 GitHub Actions 工作流。
+- `package.json` 补充 `repository`、`homepage`、`bugs`。
+
+- 插件运行在开发检出目录时（profile 用 `link:` 指向工作目录，或插件目录旁有 `.git`），设置页隐藏「更新」按钮并说明原因；`/updates` 的状态和检查结果多一个 `linked` 字段。
+- 新增 `.gitleaks.toml`，只放行 `test/diagnostics.test.mjs` 里那个用于脱敏测试的假密钥，其他内容仍会被扫描报出。CI 把 gitleaks 固定在 8.30.1：`gitleaks-action` 默认的 8.24.3 不应用这份放行。
+
+### 修复
+
+- 设置页的别名输入框缺少无障碍标签：`aria-label` 漏了字段名，读屏软件读不到。
+- 通过插件管理器更新一个 `link:` 链接的开发副本会失败（Windows 上 `EPERM`），并且可能沿链接删除开发目录里的文件（实测丢失了 `.git` 的 `HEAD`、`config`、`index`）。现在这种副本不再提供更新入口。
+
 ## [1.5.0]
 
 ### 新增与变更

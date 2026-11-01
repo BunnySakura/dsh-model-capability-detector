@@ -161,6 +161,7 @@ export function apply(ctx, rawConfig) {
     thirdPartyPending = (async () => {
       const loaded = await loadThirdParty({
         homePath: homePath(), ttlMs: config.catalogTtlMs, timeoutMs: config.catalogTimeoutMs, signal: lifetime.signal,
+        urls: { openrouter: config.openrouterUrl, litellm: config.litellmUrl },
       })
       if (disposed) return undefined
       note('third-party-loaded', { status: loaded.status })
@@ -456,6 +457,11 @@ export function apply(ctx, rawConfig) {
     if (next.catalogUrl !== previous.catalogUrl || next.catalogTtlMs !== previous.catalogTtlMs) {
       catalog = undefined
       catalogLoadedAt = 0
+    }
+    if (next.openrouterUrl !== previous.openrouterUrl || next.litellmUrl !== previous.litellmUrl
+      || next.catalogTtlMs !== previous.catalogTtlMs) {
+      thirdParty = undefined
+      thirdPartyLoadedAt = 0
     }
     lastInspected = undefined
     syncBridge()

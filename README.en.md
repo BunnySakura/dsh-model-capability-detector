@@ -44,6 +44,8 @@ You can also give the plugin a `config` in your profile's `cordis.patch.yml`. Pr
 | `catalogNumbers` | `true` | Allow public sources to fill context and maximum output |
 | `catalogNumericStrategy` | `official` | `official` is the tiered rule; `minimum` and `consensus` are legacy modes |
 | `thirdPartySources` | `true` | Allow consulting OpenRouter and LiteLLM |
+| `openrouterUrl` | `https://openrouter.ai/api/v1/models` | OpenRouter model list address. Point it at a mirror if the default is unreachable; http(s) without credentials only |
+| `litellmUrl` | `model_prices_and_context_window.json` in the LiteLLM repository | LiteLLM model table address, same rules |
 | `upgradeWritten` | `true` | Upgrade values the plugin wrote earlier when a stronger source appears |
 | `modelAliases` | `{}` | Model-name aliases, format below |
 | `catalogUrl` | `https://models.dev/api.json` | models.dev catalog address; http(s) without credentials only |
@@ -100,6 +102,8 @@ The settings page's **Detection report** lists each provider and model with ever
 
 ## FAQ
 
+**Why does the settings page show a note instead of an Update button?** This copy runs from a development folder linked into the profile (`link:path`). Letting the plugin manager update it replaces the folder the link points to and can delete files in it. Pull the tag with git in that folder, or replace the `link:` entry with the GitHub address.
+
 **Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched. Turn off **Upgrade values this plugin wrote** to stop upgrades.
 
 **How do I make it overwrite existing values?** Turn on `overwrite`, or clear the field and save.
@@ -111,7 +115,7 @@ The settings page's **Detection report** lists each provider and model with ever
 ## Privacy and network use
 
 - **Provider requests:** `GET {baseURL}/models` (`/v1/models` for Anthropic) to the provider you configured. API keys are read from DSH's credential service at call time, and redirects are rejected.
-- **Public sources:** the models.dev catalog, `openrouter.ai/api/v1/models`, and LiteLLM's `model_prices_and_context_window.json` on GitHub. Requests carry no credentials or user data, and responses are size-limited.
+- **Public sources:** the models.dev catalog, `openrouter.ai/api/v1/models`, and LiteLLM's `model_prices_and_context_window.json` on GitHub. The OpenRouter and LiteLLM addresses can be replaced with mirrors. Requests carry no credentials or user data, and responses are size-limited.
 - **Update checks:** off by default; when on, only this project's GitHub Releases are contacted.
 - **Local files**, all under `$DSH_HOME`, with no keys, provider addresses or request headers:
   - `cache/model-capability-detector/` holds the public-source caches and provenance receipts. Receipts decide whether a value was written by the plugin; route and model names in them are hashed.

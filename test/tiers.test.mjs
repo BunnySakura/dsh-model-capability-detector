@@ -9,7 +9,7 @@ import { capabilitiesOf } from '../lib/detect.js'
 import { applyAlias, nameKeys } from '../lib/names.js'
 import { hasUpgradable, mergeDetected } from '../lib/plan.js'
 import { validateField } from '../lib/settings.js'
-import { buildSourceIndex, loadThirdParty, pickAgreed, toSourceLookup, voteFor } from '../lib/sources.js'
+import { DEFAULT_SOURCE_URLS, buildSourceIndex, loadThirdParty, pickAgreed, sourceUrl, toSourceLookup, voteFor } from '../lib/sources.js'
 import { rankOf, resolveTiered } from '../lib/tiers.js'
 
 const roundTrip = (value) => JSON.parse(JSON.stringify(value))
@@ -185,6 +185,74 @@ test('third-party sources load independently, cache, and tolerate one failure', 
     assert.equal(partial.status.litellm, 'stale-cache', 'a failed refresh falls back to the previous snapshot')
     assert.equal(voteFor(partial.lookups.litellm, 'm').context, 1000)
   } finally { globalThis.fetch = original; await rm(home, { recursive: true, force: true }) }
+})
+
+test('a configured mirror is requested instead of the default, and caches do not cross addresses', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-mirror-'))
+  const original = globalThis.fetch
+  const requested = []
+  globalThis.fetch = async (url) => {
+    requested.push(String(url))
+    if (String(url).includes('openrouter') || String(url).includes('or-mirror')) {
+      return Response.json({ data: [{ id: 'v/m', context_length: 1000 }] })
+    }
+    return Response.json({ m: { max_input_tokens: 1000, mode: 'chat' } })
+  }
+  const urls = { openrouter: 'https://or-mirror.example.test/models', litellm: 'https://ll-mirror.example.test/table.json' }
+  try {
+    const first = await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000, urls })
+    assert.deepEqual(first.status, { openrouter: 'network', litellm: 'network' })
+    assert.deepEqual([...requested].sort(), [urls.litellm, urls.openrouter].sort())
+    assert.ok(requested.every((url) => !Object.values(DEFAULT_SOURCE_URLS).includes(url)), 'the default address is not contacted')
+
+    requested.length = 0
+    const again = await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000, urls })
+    assert.deepEqual(again.status, { openrouter: 'cache', litellm: 'cache' })
+    assert.equal(requested.length, 0)
+
+    // Back on the default address the mirror snapshot is not reused, even while fresh.
+    const defaults = await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000 })
+    assert.deepEqual(defaults.status, { openrouter: 'network', litellm: 'network' })
+    assert.deepEqual([...requested].sort(), Object.values(DEFAULT_SOURCE_URLS).sort())
+  } finally { globalThis.fetch = original; await rm(home, { recursive: true, force: true }) }
+})
+
+test('a snapshot written without an address key still belongs to the default address', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-legacy-'))
+  const original = globalThis.fetch
+  globalThis.fetch = async (url) => (String(url).includes('openrouter')
+    ? Response.json({ data: [{ id: 'v/m', context_length: 1000 }] })
+    : Response.json({ m: { max_input_tokens: 1000, mode: 'chat' } }))
+  try {
+    await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000 })
+    const path = join(home, 'cache', 'model-capability-detector', 'thirdparty.json')
+    const { readFile, writeFile } = await import('node:fs/promises')
+    const stored = JSON.parse(await readFile(path, 'utf8'))
+    for (const entry of Object.values(stored.sources)) delete entry.urlKey
+    await writeFile(path, JSON.stringify(stored))
+    let calls = 0
+    globalThis.fetch = async () => { calls++; return Response.json({}) }
+    const reread = await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000 })
+    assert.deepEqual(reread.status, { openrouter: 'cache', litellm: 'cache' })
+    assert.equal(calls, 0)
+    const mirrored = await loadThirdParty({ homePath: home, ttlMs: 60000, timeoutMs: 1000, urls: { openrouter: 'https://or-mirror.example.test/m' } })
+    assert.equal(mirrored.status.openrouter, 'failed', 'a legacy snapshot is not evidence about a mirror')
+    assert.equal(mirrored.status.litellm, 'cache')
+  } finally { globalThis.fetch = original; await rm(home, { recursive: true, force: true }) }
+})
+
+test('source addresses accept only plain http(s) and fall back to the default otherwise', () => {
+  assert.equal(sourceUrl('openrouter', undefined), DEFAULT_SOURCE_URLS.openrouter)
+  assert.equal(sourceUrl('openrouter', ''), DEFAULT_SOURCE_URLS.openrouter)
+  assert.equal(sourceUrl('openrouter', 'file:///etc/passwd'), DEFAULT_SOURCE_URLS.openrouter)
+  assert.equal(sourceUrl('litellm', 'https://user:pass@example.test/t.json'), DEFAULT_SOURCE_URLS.litellm)
+  assert.equal(sourceUrl('litellm', 'not a url'), DEFAULT_SOURCE_URLS.litellm)
+  assert.equal(sourceUrl('litellm', 'https://mirror.example.test/t.json'), 'https://mirror.example.test/t.json')
+  for (const key of ['openrouterUrl', 'litellmUrl']) {
+    assert.equal(validateField(key, 'ftp://example.test/x').ok, false)
+    assert.equal(validateField(key, 'https://user:pass@example.test/x').ok, false)
+    assert.equal(validateField(key, 'https://example.test/x').ok, true)
+  }
 })
 
 test('numbers within the tolerance agree and the smaller value is used', () => {

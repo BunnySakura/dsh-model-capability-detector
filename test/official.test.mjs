@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildIndex, resolveName, toLookup } from '../lib/catalog.js'
 import { DEFAULT_CONFIG } from '../index.js'
+import { VERIFIED } from '../lib/official.js'
 
 const model = (context, extra = {}) => ({ id: 'deepseek-flash', canonical_model_id: 'deepseek/deepseek-v4.1-flash-1017', limit: { context, output: 393216 }, modalities: { input: ['text', 'image'] }, ...extra })
 const document = (original = model(1048576)) => ({
@@ -65,4 +66,27 @@ test('explicitly hosted foreign model is not an original-provider record', () =>
 test('original effort list and explicit toggle preserve off without inventing other efforts', () => {
   const input = document(model(1048576, { reasoning: true, reasoning_options: [{ type: 'toggle' }, { type: 'effort', values: ['low', 'high', 'max'] }] }))
   assert.deepEqual(resolveName(lookup(input), 'deepseek-flash').safe.reasoningEfforts, { off: null, low: 'low', high: 'high', max: 'max' })
+})
+
+test('every pinned record carries its sources, a date, and a vendor-owned documentation host', () => {
+  assert.ok(VERIFIED.length >= 1, 'data/verified.json loads')
+  for (const row of VERIFIED) {
+    const label = row.id
+    assert.match(row.updated ?? '', /^\d{4}-\d{2}-\d{2}$/, `${label}: verification date`)
+    assert.ok(row.canonical?.startsWith(`${row.vendor}/`), `${label}: canonical id names its own vendor`)
+    // Release page plus a pinned configuration and the API reference: three independent sources.
+    const links = [row.doc, ...(row.urls ?? [])]
+    assert.ok(links.length >= 3 && new Set(links).size === links.length, `${label}: three distinct sources`)
+    for (const link of links) {
+      const url = new URL(link)
+      assert.equal(url.protocol, 'https:', `${label}: https only`)
+      assert.equal(url.username + url.password, '', `${label}: no credentials in a link`)
+    }
+    for (const field of ['contextWindow', 'maxTokens']) {
+      assert.ok(Number.isSafeInteger(row.safe[field]) && row.safe[field] > 0, `${label}: ${field}`)
+    }
+    assert.ok(row.safe.maxTokens <= row.safe.contextWindow, `${label}: output cannot exceed the context window`)
+    assert.ok(Array.isArray(row.safe.input) && row.safe.input.includes('text'), `${label}: input modalities`)
+    assert.equal(row.direct, true)
+  }
 })

@@ -11,10 +11,10 @@
 ## 测试
 
 ```sh
-node --test test/*.test.mjs
+node scripts/run-tests.mjs
 ```
 
-测试用合成数据和假的 `fetch`，不读取真实渠道，也不需要任何密钥。
+`pnpm test` 或 `npm test` 调用同一个入口。入口自己列出 `test/*.test.mjs`，不依赖 shell 展开通配符，也不依赖各 Node 版本对 `node --test` 目录参数的不同处理，所以 Windows 和 Node 20 到 24 行为一致。测试用合成数据和假的 `fetch`，不读取真实渠道，也不需要任何密钥。
 
 | 文件 | 覆盖 |
 |---|---|
@@ -29,7 +29,7 @@ node --test test/*.test.mjs
 | `discovery.test.mjs` | `llm.discoverModels` 包装 |
 | `diagnostics.test.mjs` | 日志脱敏与轮转 |
 
-`test/live-probe.mjs` 不属于自动测试，是一个只读脚本：向一个公开的 OpenAI 兼容地址请求模型列表并打印解析结果，用来肉眼核对解析器。运行 `node test/live-probe.mjs [baseURL]`，不读取任何凭据。
+`scripts/live-probe.mjs` 不属于自动测试，是一个只读脚本：向一个公开的 OpenAI 兼容地址请求模型列表并打印解析结果，用来肉眼核对解析器。运行 `node scripts/live-probe.mjs [baseURL]`，不读取任何凭据。它放在 `scripts/` 而不是 `test/`，避免被测试入口当成测试执行。`scripts/` 不随包发布。
 
 离线测试不等于界面验收。改动设置页、`llm.discoverModels` 包装或插件管理器调用时，要在真实的 DSH 里检查一遍。
 
@@ -45,7 +45,13 @@ node --test test/*.test.mjs
 pnpm pack
 ```
 
-`package.json` 的 `files` 决定包内容，打包后用 `tar -tf` 检查清单：应只含入口、`client.js`、`lib/`、`locale/`、`cordis.patch.yml`、图标、文档和 LICENSE，不应含测试、缓存、日志或本机路径。`*.tgz` 已被 `.gitignore` 忽略，不要提交。
+`package.json` 的 `files` 决定包内容：应只含入口、`client.js`、`lib/`、`data/`、`locale/`、`cordis.patch.yml`、图标、文档和 LICENSE，不应含测试、脚本、缓存、日志或本机路径。不必真的打包，用干跑检查清单：
+
+```sh
+npm pack --dry-run --json | node scripts/check-pack.mjs
+```
+
+`*.tgz` 已被 `.gitignore` 忽略，不要提交。
 
 ## 提交与标签
 
@@ -89,13 +95,37 @@ pnpm pack
 - 日志、缓存、压缩包没有被提交。`.gitignore` 已忽略 `*.log`、`*.jsonl`、`.env*`、`logs/`、`cache/`、`*.tgz`。
 - 文档与代码注释里没有对话过程、个人备注。
 
-简单的扫描示例：
+用脚本扫描：
 
 ```sh
-git grep -nE "C:\\\\Users|\\.dsh/profiles|sk-[A-Za-z0-9]{8,}|Bearer [A-Za-z0-9]{12,}"
+node scripts/privacy-scan.mjs
 ```
 
-没有输出才算通过。
+脚本读取包目录下的文本文件，查本机用户路径、`.dsh` 的 profile 与运行时路径、API key、Bearer 令牌、GitHub 令牌、云访问密钥、私钥块、`.env` 式赋值和个人邮箱。`example.test` 这类保留域名和 `<name>` 这类占位写法不算。命中时只打印文件、行号和类别，不打印匹配到的内容；有命中则退出码为 1。
+
+测试里故意写的假密钥，在同一行加注释 `privacy-scan: allow` 放行；真实内容不要用这个标记。脚本不检查 Git 历史，历史由 CI 里的 gitleaks 扫描。第一次推送前，在本地对完整历史也跑一次。
+
+## CI
+
+`.github/workflows/ci.yml` 在推送到 `main` 和每个 Pull Request 上运行：
+
+- 测试矩阵：Ubuntu 与 Windows，Node 20、22、24。
+- 隐私扫描 `scripts/privacy-scan.mjs`。
+- 打包清单检查：`npm pack --dry-run --json | node scripts/check-pack.mjs`。缺入口文件，或含测试、脚本、日志、`.env`，都会失败。
+- gitleaks 扫描完整历史。
+
+工作流只申请 `contents: read`。
+
+工作流里把 gitleaks 固定在 8.30.1（`GITLEAKS_VERSION`）。`gitleaks-action@v2` 不指定版本时装 8.24.3，该版本不应用 `.gitleaks.toml` 里的放行，会把假密钥报成泄露（用 8.24.3 在本地复现过：只扫最后一个提交也会在 `test/diagnostics.test.mjs` 报 1 处）。升级这个版本号前，先用新版本在本地对历史和工作区各扫一遍。
+
+gitleaks 的配置是仓库根目录的 `.gitleaks.toml`：保留全部默认规则，只对 `generic-api-key` 放行 `test/diagnostics.test.mjs` 里那个脱敏测试用的假密钥（按精确值匹配）。换一个值，或在别处出现同类密钥，仍会被报出。要放行新的假数据，先确认它确实是假的，再在配置里加一条精确值，不要放行整个目录。
+
+本地复现 CI 的扫描：下载 gitleaks 官方发布版并核对 SHA-256 后，在仓库里运行 `gitleaks git . --redact`（历史）和 `gitleaks dir . --redact`（工作区），退出码 0 为通过。`--redact` 让输出里的密钥值打码。
+
+## 本地开发安装
+
+不要用 profile 的 `link:` 依赖安装正在开发的插件，再用设置页「更新」更新它。`link:` 在 `node_modules` 里是指向工作目录的 Junction：Windows 上插件管理器替换它会报 `EPERM`，并可能沿链接清理工作目录里的文件（曾丢失 `.git` 的 `HEAD`、`config`、`index`）。插件检测到自己位于开发检出目录时不提供更新，更新开发副本请直接在工作目录里用 git。
+推送前如果发现 `git` 报「不是 Git 仓库」，先看 `.git` 里是否少了这三个文件，历史和引用通常还在。
 
 ## 文档约定
 

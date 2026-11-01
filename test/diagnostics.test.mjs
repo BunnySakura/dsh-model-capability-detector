@@ -193,7 +193,7 @@ test('the log never contains a credential-shaped value from a record', async () 
     const diagnostics = createDiagnostics(path)
     // The plugin only ever logs redacted URLs and field names; prove that a
     // record built the intended way carries no secret.
-    const secret = 'sk-live-abcdef0123456789'
+    const secret = 'sk-live-abcdef0123456789' // privacy-scan: allow (fake redaction fixture)
     diagnostics.write('route-probed', {
       route: 'example',
       url: redactUrl(`https://gateway.example/v1/models?key=${secret}`),

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # The package has no dependencies, so there is nothing to install.
+      - run: node scripts/run-tests.mjs
+
+  hygiene:
+    name: Privacy scan and package contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Scan the working tree for credentials and local paths
+        run: node scripts/privacy-scan.mjs
+      - name: Check the published file list
+        run: npm pack --dry-run --json | node scripts/check-pack.mjs
+      - name: Scan the full history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action installs 8.24.3 unless told otherwise, and that version does not
+          # apply the allowlist in .gitleaks.toml. Keep this in step with the version
+          # the config was verified against.
+          GITLEAKS_VERSION: 8.30.1

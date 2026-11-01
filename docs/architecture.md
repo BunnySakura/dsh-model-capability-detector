@@ -12,7 +12,9 @@
 | `lib/detect.js` | 把渠道模型列表解析成能力；区分含义明确的字段与参考值 |
 | `lib/plan.js` | 按来源档位合并能力、升级判断、空字段判断 |
 | `lib/catalog.js` | models.dev 目录的下载、索引、缓存，以及旧版 `minimum` / `consensus` 策略 |
-| `lib/official.js` | 原厂记录：内置核验记录与 models.dev 原厂镜像 |
+| `lib/official.js` | 原厂记录：读取 `data/verified.json` 的核验记录，以及 models.dev 原厂镜像 |
+| `data/verified.json` | 逐项核验过的原厂规格，随包发布 |
+| `scripts/` | 维护者脚本：测试入口、隐私扫描、打包清单检查、`live-probe.mjs`；不随包发布 |
 | `lib/sources.js` | OpenRouter 与 LiteLLM 的下载、索引、缓存和投票 |
 | `lib/tiers.js` | 把原厂记录与第三方来源合成一次解析，并定义来源等级 |
 | `lib/names.js` | 模型名归一化与别名 |
@@ -70,8 +72,8 @@ DSH 的发现结果结构不传递推理等级。插件在内存里缓存解析�
 
 | 路径 | 方法 | 作用 |
 |---|---|---|
-| `/updates` | GET | 读取更新状态（缓存 24 小时） |
-| `/updates` | POST | `{ action: "check", refresh }`，检查最新稳定版 |
+| `/updates` | GET | 读取更新状态（缓存 24 小时），含 `linked` |
+| `/updates` | POST | `{ action: "check", refresh }`，检查最新稳定版，结果含 `linked` |
 | `/settings` | GET | 返回生效值、默认层、已保存覆盖项、字段范围、revision |
 | `/settings` | POST | `{ revision, set, unset }`，原子保存一组变更 |
 | `/detector` | GET | 检测报告 |
@@ -105,3 +107,4 @@ DSH 的发现结果结构不传递推理等级。插件在内存里缓存解析�
 - 公开来源只用固定的 URL（models.dev 地址可配置，但只接受不含凭据的 http(s)），请求不带凭据，响应有字节上限。
 - 日志与诊断在写入边界统一脱敏，不输出原始错误对象、请求头或响应体。
 - 更新目标由代码拼接，只指向本项目仓库的稳定版标签，不接受外部传入的地址。
+- 开发检出目录不提供更新。`isDevCheckout`（`lib/update-host.js`）在插件目录不在 `node_modules` 内，或其下有 `.git` 时为真，Host 在 `/updates` 返回 `linked: true`，设置页据此隐藏「更新」按钮，`installUpdate` 也会拒绝。原因：profile 用 `link:` 指向工作目录时，`node_modules` 里的条目是指向它的 Junction，插件管理器（pnpm）替换时在 Windows 上报 `EPERM`，并可能沿链接清理工作目录里的文件。

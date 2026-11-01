@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { createProvenance, provenanceKey } from '../lib/provenance.js'
-import { registerUpdates } from '../lib/update-host.js'
+import { isDevCheckout, registerUpdates } from '../lib/update-host.js'
 import { resolveName, toLookup } from '../lib/catalog.js'
 import { apply } from '../index.js'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -78,6 +78,41 @@ test('Host update route is lazy and read-only; tool and UI share the same check'
     assert.equal((await tool.execute({ action: 'check' })).version, '9.0.0')
     assert.equal((await (await route.fetch(request())).json()).version, '9.0.0')
     assert.equal(calls, 1)
+  } finally { cleanups.forEach((fn) => { if (typeof fn === 'function') fn() }); globalThis.fetch = original }
+})
+
+test('a copy outside node_modules, or next to a .git folder, is a development checkout', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-dev-'))
+  try {
+    const installed = join(home, 'profile', 'node_modules', 'pkg')
+    const linked = join(home, 'work', 'pkg')
+    const checkout = join(home, 'profile', 'node_modules', 'odd')
+    await fs.mkdir(installed, { recursive: true })
+    await fs.mkdir(linked, { recursive: true })
+    await fs.mkdir(join(checkout, '.git'), { recursive: true })
+    assert.equal(isDevCheckout(installed + '/'), false, 'a normal install is not a checkout')
+    assert.equal(isDevCheckout(linked + '/'), true, 'a linked working directory is one')
+    assert.equal(isDevCheckout(checkout + '/'), true, 'a .git folder marks a checkout even under node_modules')
+    assert.equal(isDevCheckout(installed.replaceAll('/', '\\') + '\\'), false, 'Windows separators are understood')
+    assert.equal(isDevCheckout(), true, 'the repository under test is a checkout')
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('update status and check results report whether the copy is linked', async () => {
+  const original = globalThis.fetch
+  const cleanups = []
+  const routes = []
+  const services = { connection: { fetch: { register: (value) => { routes.push(value); return async () => {} } } } }
+  globalThis.fetch = async () => Response.json({ tag_name: 'v9.0.0', draft: false, prerelease: false, body: 'notes' })
+  try {
+    for (const linked of [true, false]) {
+      routes.length = 0
+      registerUpdates({ get: (key) => services[key], effect: (fn) => { cleanups.push(fn()) } }, { linked })
+      const route = routes.find((entry) => entry.path.endsWith('/updates'))
+      const post = new Request('https://local.test/api/model-capability-detector/updates', { method: 'POST', headers: { 'content-type': 'application/json', 'x-model-capability-detector': '1' }, body: JSON.stringify({ action: 'check' }) })
+      assert.equal((await (await route.fetch(new Request('https://local.test/api/model-capability-detector/updates'))).json()).linked, linked)
+      assert.equal((await (await route.fetch(post)).json()).linked, linked)
+    }
   } finally { cleanups.forEach((fn) => { if (typeof fn === 'function') fn() }); globalThis.fetch = original }
 })
 
