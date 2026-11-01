@@ -112,7 +112,7 @@ The settings page's **Detection report** lists each provider and model with ever
 
 You can also pick **Preset for unknown levels** in the settings, so models the sources agree reason are filled automatically. It is off by default.
 
-**Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched. Turn off **Upgrade values this plugin wrote** to stop upgrades.
+**Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched, with one exception: the starting reasoning levels `off/low/medium/high` that DSH's model page writes when you turn its reasoning switch on are replaced once the real levels are known. Turn off **Upgrade values this plugin wrote** to stop all of this.
 
 **How do I make it overwrite existing values?** Turn on `overwrite`, or clear the field and save.
 

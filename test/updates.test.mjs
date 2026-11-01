@@ -426,9 +426,6 @@ async function mountSettings(overrides, adjust = (snapshot) => snapshot) {
     render, posts, tick, store,
     control: (nodes, key) => nodes.find((node) => node.props?.['data-config-key'] === key),
     button: (nodes, label) => nodes.find((node) => node.type === 'button' && node.children.includes(label)),
-    // The reset button sits in the same row as its field; find the row by its key.
-    resetOf: (nodes, key) => nodes.find((node) => node.type === 'div' && node.props.key === key)?.children.flatMap((child) => child?.children ?? [])
-      .find((node) => node?.type === 'button' && node.children.includes('reset')),
     done: async () => { globalThis.fetch = original; await rm(home, { recursive: true, force: true }) },
   }
 }
@@ -470,19 +467,35 @@ test('options an older Host does not describe are hidden with a notice, not show
   } finally { await page.done() }
 })
 
-test('Reset shows the value a field falls back to, saves only on Save, and Discard brings the old value back', async () => {
+test('rows carry no per-field "set here" label or reset button; one button restores everything', async () => {
+  const page = await mountSettings({ timeoutMs: 9000 })
+  try {
+    const nodes = page.render()
+    const labels = nodes.flatMap((node) => node.children ?? []).filter((child) => typeof child === 'string')
+    assert.equal(labels.includes('overridden'), false, 'no "set here" label')
+    assert.equal(nodes.some((node) => node.type === 'button' && node.children.includes('reset')), false, 'no per-field reset')
+    assert.ok(page.button(nodes, 'resetAll'), 'a single restore-all button')
+    const timeout = nodes.find((node) => node.type === 'div' && node.props.key === 'timeoutMs')
+    assert.equal(timeout.children.length, 2, 'a row is a label and its control')
+  } finally { await page.done() }
+})
+
+test('Restore all defaults stages every field, saves only on Save, and Discard brings the old values back', async () => {
   const page = await mountSettings({ modelAliases: { 'my-gw': 'gpt-4o' }, timeoutMs: 9000, probeEnabled: true })
   try {
     let nodes = page.render()
     assert.equal(page.control(nodes, 'modelAliases').props.value, 'my-gw = gpt-4o')
     assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000)
     assert.equal(page.control(nodes, 'probeEnabled').props.checked, true)
+    assert.equal(page.button(nodes, 'resetAll').props.disabled, false)
 
-    for (const key of ['modelAliases', 'timeoutMs', 'probeEnabled']) page.resetOf(nodes, key).props.onClick()
+    page.button(nodes, 'resetAll').props.onClick()
     nodes = page.render()
     assert.equal(page.control(nodes, 'modelAliases').props.value, '', 'the alias box is emptied')
     assert.equal(page.control(nodes, 'timeoutMs').props.value, 15000, 'a number shows its default')
     assert.equal(page.control(nodes, 'probeEnabled').props.checked, false, 'a switch shows its default')
+    assert.ok(nodes.some((node) => node.children?.includes('resetStaged')), 'the page says it is only staged')
+    assert.equal(page.button(nodes, 'resetAll').props.disabled, true, 'nothing left to restore')
     assert.equal(page.posts.length, 0, 'nothing is saved yet')
     assert.deepEqual(page.store.effective().modelAliases, { 'my-gw': 'gpt-4o' }, 'the stored value is unchanged until Save')
 
@@ -492,36 +505,64 @@ test('Reset shows the value a field falls back to, saves only on Save, and Disca
     assert.equal(page.control(nodes, 'modelAliases').props.value, 'my-gw = gpt-4o')
     assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000)
     assert.equal(page.control(nodes, 'probeEnabled').props.checked, true)
+    assert.equal(page.button(nodes, 'resetAll').props.disabled, false)
 
-    // Saving applies the reset.
-    page.resetOf(nodes, 'modelAliases').props.onClick()
+    // Saving applies it, and a second restore has nothing to do.
+    page.button(nodes, 'resetAll').props.onClick()
     nodes = page.render()
     await page.button(nodes, 'save').props.onClick()
     await page.tick()
-    assert.deepEqual(page.posts.at(-1).unset, ['modelAliases'])
+    assert.deepEqual([...page.posts.at(-1).unset].sort(), ['modelAliases', 'probeEnabled', 'timeoutMs'])
     assert.deepEqual(page.store.effective().modelAliases, {})
+    assert.equal(page.store.effective().timeoutMs, 15000)
     nodes = page.render()
-    assert.equal(page.control(nodes, 'modelAliases').props.value, '', 'still empty after saving')
-    assert.equal(page.control(nodes, 'timeoutMs').props.value, 9000, 'the other fields were not reset')
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 15000)
+    assert.equal(page.button(nodes, 'resetAll').props.disabled, true, 'every setting is already at its default')
   } finally { await page.done() }
 })
 
-test('typing into a reset field takes it out of the reset again', async () => {
+test('restoring defaults also drops what was typed but not saved', async () => {
   const page = await mountSettings({ timeoutMs: 9000 })
   try {
     let nodes = page.render()
-    page.resetOf(nodes, 'timeoutMs').props.onClick()
+    page.control(nodes, 'timeoutMs').props.onChange({ currentTarget: { value: '7000', valueAsNumber: 7000 } })
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 7000)
+    page.button(nodes, 'resetAll').props.onClick()
+    nodes = page.render()
+    assert.equal(page.control(nodes, 'timeoutMs').props.value, 15000)
+    await page.button(nodes, 'save').props.onClick()
+    await page.tick()
+    assert.deepEqual(page.posts.at(-1).set, {})
+    assert.deepEqual(page.posts.at(-1).unset, ['timeoutMs'])
+  } finally { await page.done() }
+})
+
+test('a field edited after restoring defaults keeps the new value', async () => {
+  const page = await mountSettings({ timeoutMs: 9000, probeEnabled: true })
+  try {
+    let nodes = page.render()
+    page.button(nodes, 'resetAll').props.onClick()
     nodes = page.render()
     page.control(nodes, 'timeoutMs').props.onChange({ currentTarget: { value: '7000', valueAsNumber: 7000 } })
     nodes = page.render()
     assert.equal(page.control(nodes, 'timeoutMs').props.value, 7000)
     await page.button(nodes, 'save').props.onClick()
     await page.tick()
-    assert.deepEqual(page.posts.at(-1), { revision: page.posts.at(-1).revision, set: { timeoutMs: 7000 }, unset: [] })
+    assert.deepEqual(page.posts.at(-1).set, { timeoutMs: 7000 })
+    assert.deepEqual(page.posts.at(-1).unset, ['probeEnabled'])
     assert.equal(page.store.effective().timeoutMs, 7000)
+    assert.equal(page.store.effective().probeEnabled, false)
   } finally { await page.done() }
 })
 
+test('with nothing saved there is nothing to restore', async () => {
+  const page = await mountSettings({})
+  try {
+    const nodes = page.render()
+    assert.equal(page.button(nodes, 'resetAll').props.disabled, true)
+  } finally { await page.done() }
+})
 test('the settings page edits aliases and shows the detection report and look-up', async () => {
   let definition, Component
   let cursor = 0

@@ -17,7 +17,7 @@ import { rankOf, resolveTiered } from './lib/tiers.js'
 import { registerUpdates } from './lib/update-host.js'
 import {
   SAFE_CATALOG_FIELDS, RISKY_CATALOG_FIELDS, describeChanges, describeFallbacks,
-  FIELDS, UPGRADE_BELOW_RANK, hasBlanks, hasUpgradable, mergeDetected, sameProviders,
+  FIELDS, UPGRADE_BELOW_RANK, hasBlanks, hasUpgradable, isPlaceholder, mergeDetected, sameProviders,
 } from './lib/plan.js'
 
 export const name = 'model-capability-detector'
@@ -201,7 +201,8 @@ export function apply(ctx, rawConfig) {
           if (config.overwrite === true || !configured(model[field])) return true
           if (config.upgradeWritten === false) return false
           const receipt = receiptFor(route, model.id, field)
-          return receipt !== undefined && sameValue(receipt.value, model[field]) && rankOf(receipt.source) < UPGRADE_BELOW_RANK
+          if (receipt !== undefined && sameValue(receipt.value, model[field])) return rankOf(receipt.source) < UPGRADE_BELOW_RANK
+          return isPlaceholder(field, model[field])
         })
         if (fields.length > 0) wanted.push({ route, id: model.id, fields })
       }
@@ -418,7 +419,7 @@ export function apply(ctx, rawConfig) {
           if (configured(model[field])) {
             const receipt = receiptFor(route, model.id, field)
             const written = receipt !== undefined && sameValue(receipt.value, model[field])
-            fields[field] = { state: 'set', value: model[field], tier: written ? tierOf(receipt.source) : 'manual' }
+            fields[field] = { state: 'set', value: model[field], tier: written ? tierOf(receipt.source) : isPlaceholder(field, model[field]) ? 'template' : 'manual' }
           } else if (config.catalogFallback === false) fields[field] = { state: 'empty', reason: 'catalog-disabled' }
           else if (!catalogFields.includes(field)) fields[field] = { state: 'empty', reason: 'field-disabled' }
           else fields[field] = summarize(answer, field)

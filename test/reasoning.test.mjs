@@ -12,8 +12,8 @@ import { test } from 'node:test'
 import { buildIndex, toLookup } from '../lib/catalog.js'
 import { capabilitiesOf } from '../lib/detect.js'
 import { buildOfficialRecords, readVendors, resolveOfficial } from '../lib/official.js'
-import { UPGRADE_BELOW_RANK, mergeDetected } from '../lib/plan.js'
-import { PRESET_IDS, PRESETS, cleanEfforts, presetEfforts, readPresets } from '../lib/presets.js'
+import { UPGRADE_BELOW_RANK, hasUpgradable, isPlaceholder, mergeDetected } from '../lib/plan.js'
+import { PRESET_IDS, PRESETS, cleanEfforts, isDshTemplate, presetEfforts, readPresets } from '../lib/presets.js'
 import { PROBE_LEVELS, completionsUrl, probeModel, showsReasoning } from '../lib/probe.js'
 import { createSettingsStore, describeFields, validateField } from '../lib/settings.js'
 import { buildSourceIndex, toSourceLookup } from '../lib/sources.js'
@@ -434,4 +434,65 @@ test('reasoning evidence is read from token counts and from reasoning text', () 
   assert.equal(showsReasoning(null), false)
   assert.equal(completionsUrl('https://h.test/v1/'), 'https://h.test/v1/chat/completions')
   assert.equal(completionsUrl('https://h.test/v1/?k=1#frag'), 'https://h.test/v1/chat/completions?k=1')
+})
+
+// ---- DSH's starting template ------------------------------------------------
+
+const TEMPLATE = { off: null, low: 'low', medium: 'medium', high: 'high' }
+const real = (kind, value = { off: null, low: 'low', high: 'high', max: 'max' }) => () => answer({ state: 'yes' }, { safe: { reasoningEfforts: value }, sources: { reasoningEfforts: { kind } } })
+const runTemplate = (resolve, extra = {}, row = { id: 'm', reasoningEfforts: structuredClone(TEMPLATE) }) =>
+  run(resolve, undefined, new Map(), { r: { models: [row] } }, { upgrade: true, ...extra })
+
+test('only the exact template the model page writes counts as a placeholder', () => {
+  assert.equal(isDshTemplate(TEMPLATE), true)
+  assert.equal(isDshTemplate({ high: 'high', medium: 'medium', low: 'low', off: null }), true, 'key order is irrelevant')
+  for (const value of [undefined, null, false, [], {}, { low: 'low', medium: 'medium', high: 'high' }, { ...TEMPLATE, max: 'max' },
+    { ...TEMPLATE, high: 'HIGH' }, { ...TEMPLATE, off: 'none' }, { off: null, low: 'low', high: 'high' }]) {
+    assert.equal(isDshTemplate(value), false, JSON.stringify(value))
+  }
+  assert.equal(isPlaceholder('reasoningEfforts', TEMPLATE), true)
+  assert.equal(isPlaceholder('contextWindow', TEMPLATE), false, 'only the reasoning field has a template')
+})
+
+test('an original-provider or channel source replaces the template; a guess never does', () => {
+  for (const kind of ['original-provider-mirror', 'official-verified', 'official-sibling']) {
+    const result = runTemplate(real(kind))
+    assert.deepEqual(result.providers.r.models[0].reasoningEfforts, { off: null, low: 'low', high: 'high', max: 'max' }, kind)
+    assert.deepEqual(result.upgrades.map((entry) => [entry.from, entry.to]), [['dsh-template', kind]], kind)
+  }
+  const channel = runTemplate(() => undefined, {}, { id: 'm', reasoningEfforts: structuredClone(TEMPLATE) })
+  assert.deepEqual(channel.providers.r.models[0].reasoningEfforts, TEMPLATE, 'nothing better, nothing changes')
+  const viaChannel = run(() => undefined, undefined, new Map([['r', new Map([['m', { id: 'm', reasoningEfforts: { low: 'low', high: 'high' } }]])]]),
+    { r: { models: [{ id: 'm', reasoningEfforts: structuredClone(TEMPLATE) }] } }, { upgrade: true })
+  assert.deepEqual(viaChannel.providers.r.models[0].reasoningEfforts, { low: 'low', high: 'high' }, 'the channel’s own levels beat the template')
+  // Guesses: third-party agreement, a hint, and a preset.
+  assert.deepEqual(runTemplate(real('third-party-consensus')).providers.r.models[0].reasoningEfforts, TEMPLATE)
+  const guessed = run(() => answer({ state: 'yes' }), { id: 'deepseek', efforts: { off: null, low: 'low', high: 'high', max: 'max' } }, new Map(),
+    { r: { models: [{ id: 'm', reasoningEfforts: structuredClone(TEMPLATE) }] } }, { upgrade: true })
+  assert.deepEqual(guessed.providers.r.models[0].reasoningEfforts, TEMPLATE, 'a preset is a guess too')
+  assert.deepEqual(guessed.upgrades, [])
+})
+
+test('the template is left alone when upgrades are off, and anything else the user typed is never touched', () => {
+  assert.deepEqual(runTemplate(real('original-provider-mirror'), { upgrade: false }).providers.r.models[0].reasoningEfforts, TEMPLATE)
+  for (const typed of [{ off: null, low: 'low', high: 'high' }, { low: 'low', medium: 'medium', high: 'high' }, false]) {
+    const result = runTemplate(real('official-verified'), {}, { id: 'm', reasoningEfforts: typed })
+    assert.deepEqual(result.providers.r.models[0].reasoningEfforts, typed, JSON.stringify(typed))
+  }
+})
+
+test('a template the plugin itself wrote is handled by its receipt, not by the placeholder rule', () => {
+  const written = { value: structuredClone(TEMPLATE), source: { kind: 'official-verified' } }
+  const result = runTemplate(real('original-provider-mirror'), { receiptFor: () => written })
+  assert.deepEqual(result.providers.r.models[0].reasoningEfforts, TEMPLATE, 'a verified record outranks the newer mirror')
+  assert.deepEqual(result.upgrades, [])
+  const manual = runTemplate(real('official-verified'), { receiptFor: () => ({ value: structuredClone(TEMPLATE), source: { kind: 'manual' } }) })
+  assert.deepEqual(manual.providers.r.models[0].reasoningEfforts, TEMPLATE, 'applying that set by hand makes it a decision')
+})
+
+test('a pass is worth making for a placeholder even when no field is blank', () => {
+  const providers = { r: { models: [{ id: 'm', contextWindow: 1, maxTokens: 1, input: ['text'], reasoningEfforts: structuredClone(TEMPLATE) }] } }
+  assert.equal(hasUpgradable(providers, () => undefined), true)
+  assert.equal(hasUpgradable({ r: { models: [{ ...providers.r.models[0], reasoningEfforts: { low: 'low' } }] } }, () => undefined), false)
+  assert.equal(hasUpgradable(providers, () => ({ value: structuredClone(TEMPLATE), source: { kind: 'manual' } })), false, 'a receipt settles it')
 })

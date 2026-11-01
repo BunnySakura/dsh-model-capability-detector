@@ -26,8 +26,8 @@ window.__ModuleLoader__.load({
         detection: 'Detection', fallback: 'Capability sources', diagnostics: 'Diagnostics', updates: 'Online updates',
         save: 'Save settings', saving: 'Saving…', saved: 'Settings saved and applied.', saveFailed: 'Settings were not saved.', conflict: 'Settings changed elsewhere. The latest values were loaded; review and save again.',
         discard: 'Discard changes', readOnly: 'No DSH home directory is available, so settings are read-only.', loading: 'Loading settings…', loadFailed: 'Could not read settings from the Host.',
-        overridden: 'Set here', reset: 'Reset', invalid: 'Enter a valid value within the allowed range.', refused: 'The Host refused a value: ',
-        resetHint: 'Reset returns a field to the plugin configuration value, or the built-in default.',
+        invalid: 'Enter a valid value within the allowed range.', refused: 'The Host refused a value: ',
+        resetAll: 'Restore all defaults', resetStaged: 'All settings are set back to their defaults here. Save to apply, or discard to undo. Defaults are the values in the plugin configuration, or the built-in ones.',
         check: 'Check for updates', checking: 'Checking…', unchecked: 'Not checked yet.', checked: 'Check complete.', 'no-release': 'No stable release is available.', 'rate-limited': 'GitHub rate limit reached; try again later.', unavailable: 'Could not check GitHub. Detection remains unaffected.', cancelled: 'Check cancelled.',
         latest: 'Latest stable version', current: 'Installed version', release: 'Release notes', update: 'Update this plugin', confirm: 'Confirm update', cancel: 'Cancel',
         updateWarning: 'DSH will install this tagged version for this profile. The plugin manager controls compatibility, install scripts and the final result.',
@@ -57,13 +57,13 @@ window.__ModuleLoader__.load({
         thirdPartySourcesLabel: 'Use third-party sources', thirdPartySourcesHint: 'When original records have no value, use OpenRouter, LiteLLM and models.dev, but only values at least two of them agree on.',
         openrouterUrlLabel: 'OpenRouter model list URL', openrouterUrlHint: 'Public model list (http or https, no credentials). Point it at a mirror if the default is unreachable.',
         litellmUrlLabel: 'LiteLLM model table URL', litellmUrlHint: 'Public model_prices_and_context_window.json (http or https, no credentials). Point it at a mirror if the default is unreachable.',
-        upgradeWrittenLabel: 'Upgrade values this plugin wrote', upgradeWrittenHint: 'Replace a value the plugin filled from a weaker source once a stronger one appears. Values you typed are never changed.',
+        upgradeWrittenLabel: 'Upgrade values this plugin wrote', upgradeWrittenHint: 'Replace a value the plugin filled from a weaker source once a stronger one appears. Also replaces the starting reasoning levels that the DSH model page writes, when real levels are known. Anything else you typed is never changed.',
         modelAliasesLabel: 'Model name aliases', modelAliasesHint: 'One per line: channel name = standard model name (for example my-gateway-gpt = gpt-4o). Used when looking up original and third-party records.',
         report: 'Detection report', reportLoad: 'Show report', reportLoading: 'Loading…', reportEmpty: 'No providers with models are configured.', reportFailed: 'Could not build the report.', reportNote: 'Built from your saved providers and the public sources. No channel is contacted and no address or key is shown.',
         rescan: 'Detect again now', rescanning: 'Detecting…', rescanDone: 'Detection finished. Show the report again to see the result.', rescanFailed: 'Detection did not run (the plugin may be disabled).',
         lookup: 'Look up a model name', lookupPlaceholder: 'Model name as the channel lists it', lookupRun: 'Look up', lookupFailed: 'Look-up failed.', matched: 'Matched', unmatched: 'No original record', aliased: 'via alias', votes: 'Third-party sources',
         fieldcontextWindow: 'Context window', fieldmaxTokens: 'Max output', fieldinput: 'Input', fieldreasoningEfforts: 'Reasoning', stateEmpty: 'Empty',
-        tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you', tierpreset: 'Preset (a guess)',
+        tierapi: 'Channel API', tierofficial: 'Original provider', tiersibling: 'Same-line snapshots', 'tierthird-party': 'Third-party consensus', tierhint: 'API hint', tierlegacy: 'Legacy catalog', tiermanual: 'Set by you', tierpreset: 'Preset (a guess)', tiertemplate: 'DSH starting template (replaced by real levels when known)',
         reasoning: 'Reasoning levels',
         staleHost: 'The running plugin does not know these options yet, so they are hidden. Reload the plugin or restart DSH to load the new version: ',
         reasoningPresetLabel: 'Preset for unknown levels', reasoningPresetHint: 'When the sources agree a model reasons but name no level, fill this preset. It is a guess about what your channel accepts; any real source replaces it later. Off by default.',
@@ -82,8 +82,8 @@ window.__ModuleLoader__.load({
         detection: '检测设置', fallback: '能力来源', diagnostics: '诊断日志', updates: '在线更新',
         save: '保存设置', saving: '保存中…', saved: '设置已保存并生效。', saveFailed: '设置未保存。', conflict: '设置已在别处被修改，已载入最新值。请检查后重新保存。',
         discard: '放弃更改', readOnly: '找不到 DSH 主目录，设置只读。', loading: '正在读取设置…', loadFailed: '无法从 Host 读取设置。',
-        overridden: '已在此设置', reset: '重置', invalid: '请输入范围内的有效值。', refused: 'Host 拒绝了以下取值：',
-        resetHint: '重置会让字段回到插件配置值，没有则回到内置默认值。',
+        invalid: '请输入范围内的有效值。', refused: 'Host 拒绝了以下取值：',
+        resetAll: '恢复全部默认', resetStaged: '所有设置已在此恢复为默认值。点击“保存设置”生效，或点击“放弃修改”撤销。默认值指插件配置里的值，没有则为内置值。',
         check: '检查更新', checking: '检查中…', unchecked: '尚未检查。', checked: '检查完成。', 'no-release': '暂无稳定版发布。', 'rate-limited': 'GitHub 请求达到限流，请稍后重试。', unavailable: '无法检查 GitHub，不影响能力检测。', cancelled: '检查已取消。',
         latest: '最新稳定版本', current: '当前安装版本', release: '更新说明', update: '更新此插件', confirm: '确认更新', cancel: '取消',
         updateWarning: 'DSH 将为此 profile 安装该固定版本。兼容性、安装脚本和最终结果均由插件管理器控制。',
@@ -113,13 +113,13 @@ window.__ModuleLoader__.load({
         thirdPartySourcesLabel: '使用第三方来源', thirdPartySourcesHint: '原厂记录没有值时，参考 OpenRouter、LiteLLM 和 models.dev，且只采用至少两家一致的值。',
         openrouterUrlLabel: 'OpenRouter 模型列表 URL', openrouterUrlHint: '公开模型列表（http 或 https，不含凭据）。默认地址访问不了时，改成镜像地址。',
         litellmUrlLabel: 'LiteLLM 模型表 URL', litellmUrlHint: '公开的 model_prices_and_context_window.json（http 或 https，不含凭据）。默认地址访问不了时，改成镜像地址。',
-        upgradeWrittenLabel: '升级插件写入的值', upgradeWrittenHint: '插件曾用较弱来源填写的值，出现更强来源时自动替换。你手填的值永不改动。',
+        upgradeWrittenLabel: '升级插件写入的值', upgradeWrittenHint: '插件曾用较弱来源填写的值，出现更强来源时自动替换。DSH 模型页打开推理开关时写入的默认等级，在查到真实等级后也会被替换。其他你手填的值永不改动。',
         modelAliasesLabel: '模型名别名', modelAliasesHint: '每行一条：渠道里的名字 = 标准模型名（例如 my-gateway-gpt = gpt-4o）。查询原厂和第三方记录时使用。',
         report: '检测报告', reportLoad: '查看报告', reportLoading: '加载中…', reportEmpty: '没有配置带模型的渠道。', reportFailed: '无法生成报告。', reportNote: '依据已保存的渠道和公开来源生成，不会联系渠道，也不显示地址或密钥。',
         rescan: '立即重新检测', rescanning: '检测中…', rescanDone: '检测完成。再次点击“查看报告”可看到结果。', rescanFailed: '检测没有运行（插件可能已关闭）。',
         lookup: '试查模型名', lookupPlaceholder: '渠道里列出的模型名', lookupRun: '查询', lookupFailed: '查询失败。', matched: '已匹配', unmatched: '没有原厂记录', aliased: '经别名', votes: '第三方来源',
         fieldcontextWindow: '上下文窗口', fieldmaxTokens: '最大输出', fieldinput: '输入', fieldreasoningEfforts: '推理', stateEmpty: '空',
-        tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置', tierpreset: '预设（猜测值）',
+        tierapi: '渠道 API', tierofficial: '原厂', tiersibling: '同系快照推断', 'tierthird-party': '第三方一致', tierhint: 'API 参考值', tierlegacy: '旧版目录', tiermanual: '你手动设置', tierpreset: '预设（猜测值）', tiertemplate: 'DSH 默认模板（查到真实等级后会替换）',
         reasoning: '推理等级',
         staleHost: '正在运行的插件还不认识这些选项，已先隐藏。请重载插件或重启 DSH 以加载新版本：',
         reasoningPresetLabel: '等级未知时套用的预设', reasoningPresetHint: '来源一致认为模型会推理、却没给出任何等级时，填入这套预设。它只是对渠道可接受取值的猜测，之后出现真实来源会自动替换。默认关闭。',
@@ -228,11 +228,15 @@ window.__ModuleLoader__.load({
             setResets((previous) => { const next = { ...previous }; delete next[key]; return next })
             setMessage('')
           }
-          const reset = (key) => {
-            setDraft((previous) => { const next = { ...previous }; delete next[key]; return next })
-            setResets((previous) => ({ ...previous, [key]: true }))
-            if (key === 'modelAliases') setAliasText(null)
-            setMessage('')
+          // Stage "everything back to default": drop typed edits and mark every saved override
+          // for removal. Nothing is stored until Save; Discard puts the page back as it was.
+          const saved = Object.keys(overrides)
+          const canResetAll = editing && !busy && (saved.some((key) => !own(resets, key)) || Object.keys(draft).length > 0)
+          const resetAll = () => {
+            setDraft({})
+            setResets(Object.fromEntries(saved.map((key) => [key, true])))
+            setAliasText(null)
+            setMessage('resetStaged')
           }
           const discard = () => { setDraft({}); setResets({}); setAliasText(null); setMessage('') }
           const valid = (key, value) => {
@@ -383,15 +387,9 @@ window.__ModuleLoader__.load({
             if (key === 'reasoningPreset') return id === 'none' ? t('presetNone') : `${id} · ${levelsOf(state.presets?.[id])}`
             return t(`strategy${id[0].toUpperCase()}${id.slice(1)}`)
           }
-          const fieldFrame = (key, control) => {
-            const marked = own(overrides, key) || own(resets, key)
-            return h('div', { key, style: { display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1.4fr) auto', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
-              h('div', {}, h('div', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 500 } }, t(`${key}Label`)), h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, marginTop: 3 } }, t(`${key}Hint`))),
-              control,
-              h('span', { style: { display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end', fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
-                own(overrides, key) && !own(resets, key) ? t('overridden') : '',
-                marked ? h('button', { type: 'button', disabled: !editing || busy || own(resets, key), onClick: () => reset(key), style: smallButton }, t('reset')) : null))
-          }
+          const fieldFrame = (key, control) => h('div', { key, style: { display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1.4fr)', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+            h('div', {}, h('div', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 500 } }, t(`${key}Label`)), h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, marginTop: 3 } }, t(`${key}Hint`))),
+            control)
           const textControl = (key, type, meta) => fieldFrame(key, h('input', {
             type, 'data-config-key': key, value: shown[key] ?? '', min: meta?.min, max: meta?.max, step: type === 'number' ? '1' : undefined,
             disabled: !editing || busy, style: inputStyle, 'aria-label': t(`${key}Label`),
@@ -415,7 +413,6 @@ window.__ModuleLoader__.load({
             state.phase === 'loading' ? h('p', { role: 'status' }, t('loading')) : null,
             state.phase === 'failed' ? h('p', { role: 'alert' }, t('loadFailed')) : null,
             ready && !state.writable ? h('p', { role: 'status' }, t('readOnly')) : null,
-            ready ? h('p', { style: { margin: '0 0 8px', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('resetHint')) : null,
             missing.length > 0 ? h('p', { role: 'status', 'data-stale-host': 'true' }, `${t('staleHost')}${missing.join(', ')}`) : null,
             ...(ready ? FIELD_GROUPS.filter((group) => group.fields.some(described)).map((group) => h('section', { key: group.id, style: { marginTop: 20 } },
               h('h4', { style: { margin: '0 0 4px', paddingBottom: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)', fontSize: 14 } }, t(group.id)),
@@ -464,10 +461,11 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', onClick: () => setConfirming(false), style: { ...secondaryButton, marginLeft: 8 } }, t('cancel'))) : null,
               installMessage ? h('p', { role: 'status', 'aria-live': 'polite' }, describe(installMessage)) : null,
               installMessage === 'installNoManager' && updateState.installTarget ? h('code', { style: { display: 'block', overflowWrap: 'anywhere' } }, updateState.installTarget) : null),
-            message ? h('p', { role: message === 'saved' ? 'status' : 'alert' }, describe(message)) : null,
-            ready ? h('div', { style: { display: 'flex', gap: 8, marginTop: 18 } },
+            message ? h('p', { role: message === 'saved' || message === 'resetStaged' ? 'status' : 'alert' }, describe(message)) : null,
+            ready ? h('div', { style: { display: 'flex', gap: 8, marginTop: 18, flexWrap: 'wrap' } },
               h('button', { type: 'button', disabled: !editing || busy || !changed, onClick: save, style: primaryButton }, t(busy ? 'saving' : 'save')),
-              changed ? h('button', { type: 'button', disabled: busy, onClick: discard, style: secondaryButton }, t('discard')) : null) : null)
+              changed ? h('button', { type: 'button', disabled: busy, onClick: discard, style: secondaryButton }, t('discard')) : null,
+              h('button', { type: 'button', disabled: !canResetAll, onClick: resetAll, style: { ...secondaryButton, marginLeft: 'auto' } }, t('resetAll'))) : null)
         }
 
         // The detector's own configuration lives on its bundle page, like every
