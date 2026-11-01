@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-capability-detector",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "type": "module",
   "description": "DSH plugin that detects a model's context window, image input, and reasoning levels from a provider's model listing — with a public-catalog fallback — and writes them into the llm-pi-ai profile.",
   "keywords": [
@@ -46,14 +46,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1 <5.0.0",
-    "@deepseek-ai/dsh": ">=0.2.0-rc.1 <0.3.0-0",
-    "@deepseek-ai/schemastery": ">=3.18.0 <4.0.0"
+    "@deepseek-ai/dsh": ">=0.2.0-rc.1 <0.3.0-0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
-      "optional": true
-    },
-    "@deepseek-ai/schemastery": {
       "optional": true
     }
   },

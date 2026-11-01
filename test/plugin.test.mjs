@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Host-side behaviour checks for `apply()`, driven by a fake Context.
  *
  * Run: node --test test/plugin.test.mjs
@@ -9,6 +9,9 @@
 
 import assert from 'node:assert/strict'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { apply, DEFAULT_CONFIG } from '../index.js'
@@ -47,6 +50,9 @@ function createHarness(options = {}) {
     get: (name) => {
       if (name === 'llm') return options.llm
       if (name === 'loader') return options.loader
+      if (name === 'connection' && options.routes !== undefined) {
+        return { fetch: { register: (route) => { options.routes.set(route.path, route); return async () => {} } } }
+      }
       if (name === 'hmr' && options.withHmr === true) return { executing }
       if (name === 'dshHomePath' && typeof options.homePath === 'string') {
         const root = options.homePath
@@ -321,8 +327,38 @@ test('enabled: false disables the automatic pass', async () => {
     stub.restore()
   }
   assert.equal(stub.calls.length, 0)
-  assert.equal(listeners.size, 0, 'no listeners are installed when disabled')
   assert.equal(state.writes.length, 0)
+})
+
+test('settings saved through the Host route apply live, including re-enabling', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'mcd-live-'))
+  const stub = stubFetch(listing)
+  const routes = new Map()
+  const { ctx, state, listeners } = createHarness({ homePath: home, routes })
+  const save = async (change) => {
+    const route = routes.get('/api/model-capability-detector/settings')
+    const read = await (await route.fetch(new Request('https://local.test/s'))).json()
+    const response = await route.fetch(new Request('https://local.test/s', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-model-capability-detector': '1' },
+      body: JSON.stringify({ revision: read.revision, ...change }),
+    }))
+    return { status: response.status, body: await response.json() }
+  }
+  const fire = async () => {
+    for (const handler of listeners.get('settings/document-updated') ?? []) handler('llm-pi-ai', 2)
+    await settle()
+  }
+  try {
+    apply(ctx, { startupDelayMs: 3600000, debounceMs: 0, catalogFallback: false })
+    assert.equal((await save({ set: { enabled: false } })).status, 200)
+    await fire()
+    assert.equal(stub.calls.length, 0, 'disabled from the GUI: no request')
+    assert.equal((await save({ unset: ['enabled'] })).status, 200)
+    await settle()
+    assert.equal(stub.calls.length, 1, 'enabling again looks at the saved providers at once')
+    assert.equal(state.writes.length, 1)
+  } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
 })
 
 test('the echo of our own write does not schedule another request', async () => {

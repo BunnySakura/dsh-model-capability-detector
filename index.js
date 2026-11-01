@@ -1,14 +1,15 @@
 /** Automatic capability detection for user-owned provider configurations. */
-import { createRequire } from 'node:module'
+/** Automatic capability detection for user-owned provider configurations. */
 import { isAbsolute, join } from 'node:path'
 import { format } from 'node:util'
 
-import { DEFAULT_CACHE_TTL_MS, loadCatalog, resolveName, toLookup } from './lib/catalog.js'
+import { loadCatalog, resolveName, toLookup } from './lib/catalog.js'
 import { createDiagnostics, sanitizeMessage } from './lib/diagnostics.js'
 import { configured, listingHeaders, listingUrl, readListing } from './lib/detect.js'
-import { bridgeDiscovery, createDiscoveryCache, waitWithSignal } from './lib/discovery.js'
+import { attachDiscovery, createDiscoveryCache, waitWithSignal } from './lib/discovery.js'
 import { readJsonResponse } from './lib/http.js'
 import { createProvenance } from './lib/provenance.js'
+import { DEFAULTS, createSettingsStore } from './lib/settings.js'
 import { registerUpdates } from './lib/update-host.js'
 import {
   SAFE_CATALOG_FIELDS, RISKY_CATALOG_FIELDS, describeChanges, describeFallbacks,
@@ -17,58 +18,8 @@ import {
 
 export const name = 'model-capability-detector'
 export const inject = ['settings', 'credentials']
-export const DEFAULT_CONFIG = {
-  settingsNs: 'llm-pi-ai',
-  enabled: true,
-  overwrite: false,
-  dryRun: false,
-  timeoutMs: 15000,
-  debounceMs: 800,
-  startupDelayMs: 3000,
-  maxResponseBytes: 4 * 1024 * 1024,
-  catalogFallback: true,
-  catalogUrl: 'https://models.dev/api.json',
-  catalogTimeoutMs: 30000,
-  catalogMaxBytes: 16 * 1024 * 1024,
-  catalogTtlMs: DEFAULT_CACHE_TTL_MS,
-  catalogNumbers: true,
-  catalogNumericStrategy: 'official',
-  updateCheckOnStartup: false,
-  discoveryTrigger: true,
-  logging: false,
-  logFile: '',
-}
-
-function buildConfigSchema() {
-  try {
-    const z = createRequire(import.meta.url)('@deepseek-ai/schemastery').default
-    return z.object({
-      settingsNs: z.string().default('llm-pi-ai'),
-      enabled: z.boolean().default(true),
-      overwrite: z.boolean().default(false),
-      dryRun: z.boolean().default(false),
-      timeoutMs: z.number().min(1).max(600000).default(15000),
-      debounceMs: z.number().min(0).max(60000).default(800),
-      startupDelayMs: z.number().min(0).max(600000).default(3000),
-      maxResponseBytes: z.number().min(1024).default(4 * 1024 * 1024),
-      catalogFallback: z.boolean().default(true),
-      catalogUrl: z.string().default('https://models.dev/api.json'),
-      catalogTimeoutMs: z.number().min(1).max(600000).default(30000),
-      catalogMaxBytes: z.number().min(1024).default(16 * 1024 * 1024),
-      catalogTtlMs: z.number().min(0).default(DEFAULT_CACHE_TTL_MS),
-      catalogNumbers: z.boolean().default(true),
-      catalogNumericStrategy: z.union([z.const('official'), z.const('minimum'), z.const('consensus')]).default('official'),
-      updateCheckOnStartup: z.boolean().default(false),
-      discoveryTrigger: z.boolean().default(true),
-      logging: z.boolean().default(false),
-      logFile: z.string().default(''),
-    })
-  } catch {
-    return undefined
-  }
-}
-export const Config = buildConfigSchema()
-
+/** Built-in defaults; the row's `config` and GUI overrides are layered on top. */
+export const DEFAULT_CONFIG = DEFAULTS
 /** One listing request, cancelled with its owner and bounded while streaming. */
 async function fetchListing({ baseURL, api, apiKey, headers, timeoutMs, maxResponseBytes, signal }) {
   const target = listingUrl(baseURL, api)
@@ -99,9 +50,18 @@ async function fetchListing({ baseURL, api, apiKey, headers, timeoutMs, maxRespo
 }
 
 export function apply(ctx, rawConfig) {
-  const config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) }
-  if (typeof ctx.inject === 'function' || ctx.get('connection') || ctx.get('tools')) registerUpdates(ctx, config)
-  if (config.enabled === false) return
+  const homePath = ctx.get('dshHomePath')
+  const home = typeof homePath === 'function' ? homePath() : undefined
+  const settingsStore = createSettingsStore({
+    home, patch: rawConfig,
+    onInvalid: (keys) => ctx.logger?.warn?.('model-capability-detector: ignoring invalid configuration: %s', keys.join(', ')),
+  })
+  // Every option is read through this binding at the moment it is used, so a
+  // change saved from the GUI applies without reloading the plugin.
+  let config = settingsStore.effective()
+  if (typeof ctx.inject === 'function' || ctx.get('connection') || ctx.get('tools')) {
+    registerUpdates(ctx, { config: () => config, settings: settingsStore })
+  }
   let disposed = false
   let timer
   let startupTimer
@@ -113,24 +73,32 @@ export function apply(ctx, rawConfig) {
   let catalogPending
   const lifetime = new AbortController()
   const discoveryCache = createDiscoveryCache()
-  const homePath = ctx.get('dshHomePath')
-  const provenanceStore = createProvenance(typeof homePath === 'function' ? homePath() : undefined)
-  const logging = config.logging === true || (typeof config.logFile === 'string' && config.logFile.length > 0)
-  const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map((level) => [level, (...args) => {
-    if (logging) ctx.logger[level]('%s', sanitizeMessage(format(...args)))
-  }]))
-  const logPath = (() => {
-    const path = config.logFile
+  const provenanceStore = createProvenance(home)
+  let logging
+  let logPath
+  let diagnostics = createDiagnostics(undefined)
+  let catalogFields
+  const resolveLogPath = (path) => {
     if (typeof path !== 'string' || path.length === 0) return undefined
-    const home = typeof homePath === 'function' ? homePath() : undefined
     if (path === '~') return home
     if (/^~[/\\]/.test(path)) return home === undefined ? undefined : join(home, path.slice(2))
     return isAbsolute(path) || home === undefined ? path : join(home, path)
-  })()
-  const diagnostics = createDiagnostics(logPath)
+  }
+  const reconfigure = () => {
+    logging = config.logging === true || (typeof config.logFile === 'string' && config.logFile.length > 0)
+    const nextPath = resolveLogPath(config.logFile)
+    if (nextPath !== logPath) {
+      logPath = nextPath
+      diagnostics = createDiagnostics(logPath)
+    }
+    catalogFields = config.catalogFallback === false ? [] : config.catalogNumbers === true
+      ? [...SAFE_CATALOG_FIELDS, ...RISKY_CATALOG_FIELDS] : [...SAFE_CATALOG_FIELDS]
+  }
+  const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map((level) => [level, (...args) => {
+    if (logging) ctx.logger[level]('%s', sanitizeMessage(format(...args)))
+  }]))
   const note = (event, detail) => { if (diagnostics.enabled) void diagnostics.write(event, detail) }
-  const catalogFields = config.catalogFallback === false ? [] : config.catalogNumbers === true
-    ? [...SAFE_CATALOG_FIELDS, ...RISKY_CATALOG_FIELDS] : [...SAFE_CATALOG_FIELDS]
+  reconfigure()
 
   const outsideTransaction = (operation) => {
     const store = ctx.get('hmr')?.executing
@@ -244,17 +212,26 @@ export function apply(ctx, rawConfig) {
     lastInspected = undefined
     return models.map((model) => ({ ...model, ...merged.get(model.id) }))
   }
-  if (config.discoveryTrigger !== false) {
-    const install = (owner) => bridgeDiscovery(owner, {
-      settingsNs: config.settingsNs, discover,
+  // The Models-page bridge follows `discoveryTrigger` while the plugin runs.
+  let llmOwner = typeof ctx.inject === 'function' ? undefined : ctx
+  let detachBridge
+  const syncBridge = () => {
+    const wanted = !disposed && config.discoveryTrigger !== false && llmOwner !== undefined
+    if (!wanted) { detachBridge?.(); detachBridge = undefined; return }
+    if (detachBridge !== undefined) return
+    const llm = llmOwner.get('llm')
+    if (typeof llm?.discoverModels !== 'function' || typeof llm.listConfigurableProviders !== 'function') return
+    detachBridge = attachDiscovery(llm, {
+      settingsNs: () => config.settingsNs, discover, isActive: () => config.enabled !== false,
       onError: (error) => { note('discovery-failed', { message: sanitizeMessage(error) }); logger.warn('%s', sanitizeMessage(error)) },
     })
-    if (typeof ctx.inject === 'function') ctx.inject(['llm'], install)
-    else install(ctx)
   }
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['llm'], (owner) => { llmOwner = owner; syncBridge(); return () => { detachBridge?.(); detachBridge = undefined; llmOwner = undefined } })
+  } else syncBridge()
 
   const runOnce = async (reason) => {
-    if (disposed) return
+    if (disposed || config.enabled === false) return
     note('pass-start', { reason })
     const current = readProfile()
     if (current === undefined) return
@@ -332,7 +309,7 @@ export function apply(ctx, rawConfig) {
     })
   }
   const schedule = (reason) => {
-    if (disposed) return
+    if (disposed || config.enabled === false) return
     clearTimeout(timer)
     timer = setTimeout(() => { timer = undefined; kick(reason) }, config.debounceMs)
     timer.unref?.()
@@ -343,7 +320,24 @@ export function apply(ctx, rawConfig) {
     clearTimeout(startupTimer)
     lifetime.abort(new Error('plugin disposed'))
     discoveryCache.clear()
+    detachBridge?.()
+    detachBridge = undefined
   })
+  // A change saved from the GUI: refresh derived state, drop caches that
+  // depended on the old values, and look at the saved providers once again.
+  ctx.effect(() => settingsStore.subscribe((next, previous) => {
+    if (disposed) return
+    config = next
+    reconfigure()
+    if (next.catalogUrl !== previous.catalogUrl || next.catalogTtlMs !== previous.catalogTtlMs) {
+      catalog = undefined
+      catalogLoadedAt = 0
+    }
+    lastInspected = undefined
+    syncBridge()
+    note('settings-changed', { changed: Object.keys(next).filter((key) => next[key] !== previous[key]) })
+    schedule('settings-changed')
+  }))
   ctx.on('settings/document-updated', (ns) => { if (ns === config.settingsNs) schedule('settings-document-updated') })
   ctx.on('app-boot/config-reload', () => schedule('config-reload'))
   const loader = ctx.root?.loader ?? ctx.get('loader')

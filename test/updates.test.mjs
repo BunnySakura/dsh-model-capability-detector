@@ -64,32 +64,133 @@ test('cancelled checker sends no request', async () => {
   assert.equal((await checker.check()).status, 'cancelled')
 })
 
-test('client confirmation hands a fixed target to the native DSH installation dialog', async () => {
-  let definition, Component, installed
-  const states = [{ status: 'checked', ...readRelease(release(), '1.2.0') }, false, false]
-  let index = 0
-  const React = {
-    createElement: (type, props, ...children) => ({ type, props, children }),
-    useState: () => { const position = index++; return [states[position], (value) => { states[position] = value }] },
-    useRef: () => ({ current: true }), useEffect() {},
+test('bundle page card saves through the settings route and updates through the plugin manager', async () => {
+  let definition, Component
+  let cursor = 0
+  const hooks = [], effects = [], posts = [], installs = []
+  const fields = {
+    enabled: { type: 'boolean' }, updateCheckOnStartup: { type: 'boolean' }, timeoutMs: { type: 'integer', min: 1, max: 600000 },
+    catalogNumericStrategy: { type: 'enum', values: ['official', 'minimum', 'consensus'] }, logFile: { type: 'path' },
   }
-  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
-    window: { __ModuleLoader__: { load: (value) => { definition = value } } },
-    document: { baseURI: 'http://127.0.0.1:8465/' }, URL,
-  })
-  const plugin = definition.factory(() => React)
-  plugin.apply({ effect: (fn) => fn(), locale: { register() {}, bind: () => (key) => key },
-    slots: { inject: (_key, fn) => fn(), register: (options, component) => { assert.equal(options.name, 'plugins.tab'); Component = component } } })
-  const props = { install: (value) => { installed = value } }
-  const render = () => { index = 0; return Component(props) }
-  const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(flatten)]
-  const initial = flatten(render())
-  assert.equal(installed, undefined)
-  initial.find((node) => node.type === 'button' && node.children.includes('update')).props.onClick()
-  assert.equal(installed, undefined)
-  const confirmation = flatten(render()).find((node) => node.type === 'button' && node.children.includes('confirm'))
-  confirmation.props.onClick()
-  assert.equal(installed.spec, 'git+https://github.com/BunnySakura/dsh-model-capability-detector.git#v1.3.0')
-  assert.equal(installed.version, '1.3.0')
-  assert.equal(installed.approvedBuilds, undefined)
+  let current = { enabled: true, updateCheckOnStartup: false, timeoutMs: 15000, catalogNumericStrategy: 'official', logFile: '' }
+  let revision = 'r1'
+  const snapshot = () => ({ ok: true, revision, writable: true, defaults: { ...current }, overrides: {}, effective: { ...current }, fields })
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) {
+      const slot = cursor++
+      if (!(slot in hooks)) hooks[slot] = typeof initial === 'function' ? initial() : initial
+      return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }]
+    },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const text = {
+    title: 'Model Capability Detector', summary: 'Configure this plugin', save: 'Save settings', check: 'Check for updates',
+    update: 'Update this plugin', confirm: 'Confirm update', installApplied: 'Updated.', updates: 'Online updates', detection: 'Detection',
+  }
+  const locale = { register() {}, bind: () => (key) => text[key] ?? key }
+  const cleanups = []
+  const originalFetch = globalThis.fetch
+  const stub = async (url, init = {}) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/settings')) {
+      if (init.method === 'POST') {
+        const body = JSON.parse(init.body)
+        assert.equal(init.headers['x-model-capability-detector'], '1')
+        posts.push(body)
+        if (body.revision !== revision) return Response.json({ ok: false, reason: 'conflict', ...snapshot() }, { status: 409 })
+        Object.assign(current, body.set); revision = 'r2'
+      }
+      return Response.json(snapshot())
+    }
+    return Response.json({ status: 'checked', ...readRelease({ tag_name: 'v1.5.0', draft: false, prerelease: false, body: 'notes' }, '1.4.0') })
+  }
+  globalThis.fetch = stub
+  const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+  try {
+    runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+      window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+      document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+    })
+    const plugin = definition.factory(() => React)
+    assert.deepEqual([...plugin.inject], ['slots', 'locale'])
+    plugin.apply({
+      effect: (fn) => { cleanups.push(fn()) }, locale,
+      get: (key) => key === 'remote.pluginManager' ? { installBundle: async (spec, options) => { installs.push({ spec, options }); return { ok: true, value: { application: 'applied' } } } } : undefined,
+      slots: {
+        inject: (name, fn) => { assert.equal(name, 'plugins.bundle.config'); fn() },
+        register: (options, component) => { assert.equal(options.key, 'dsh-model-capability-detector'); assert.equal(options.name, 'plugins.bundle.config'); Component = component },
+      },
+    })
+    assert.equal(Component({ view: 'summary' }).children[0], 'Configure this plugin')
+    const page = Component({ view: 'page' })
+    const render = () => { cursor = 0; return page.type(page.props) }
+    render(); await tick()
+    let nodes = flatten(render())
+    assert.ok(nodes.some((node) => node.children?.includes('Detection')))
+    assert.ok(nodes.some((node) => node.children?.includes('Online updates')))
+    const limit = nodes.find((node) => node.props?.['data-config-key'] === 'timeoutMs')
+    limit.props.onChange({ currentTarget: { value: '0', valueAsNumber: 0 } })
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('Save settings')).props.onClick()
+    assert.equal(posts.length, 0, 'an out-of-range number is refused in the browser')
+    nodes.find((node) => node.props?.['data-config-key'] === 'timeoutMs').props.onChange({ currentTarget: { value: '9000', valueAsNumber: 9000 } })
+    nodes.find((node) => node.props?.['data-config-key'] === 'updateCheckOnStartup').props.onChange({ currentTarget: { checked: true } })
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('Save settings')).props.onClick()
+    assert.deepEqual(JSON.parse(JSON.stringify(posts[0])), { revision: 'r1', set: { timeoutMs: 9000, updateCheckOnStartup: true }, unset: [] })
+    nodes = flatten(render())
+    assert.equal(nodes.find((node) => node.props?.['data-config-key'] === 'timeoutMs').props.value, 9000)
+    await nodes.find((node) => node.type === 'button' && node.children.includes('Check for updates')).props.onClick()
+    await tick()
+    nodes = flatten(render())
+    nodes.find((node) => node.type === 'button' && node.children.includes('Update this plugin')).props.onClick()
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('Confirm update')).props.onClick()
+    assert.equal(installs.length, 1)
+    assert.equal(installs[0].spec, 'git+https://github.com/BunnySakura/dsh-model-capability-detector.git#v1.5.0')
+    assert.equal(installs[0].options.enabled, true)
+    assert.match(installs[0].options.requestId, /^model-capability-detector-/)
+    nodes = flatten(render())
+    assert.ok(nodes.some((node) => node.children?.includes('Updated.')))
+  } finally { cleanups.forEach((dispose) => typeof dispose === 'function' && dispose()); globalThis.fetch = originalFetch }
+})
+
+test('the page refuses an install target outside the fixed repository', async () => {
+  let definition, Component
+  let cursor = 0
+  const hooks = [], effects = [], installs = []
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], (next) => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }] },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ??= { current: initial } },
+    useEffect(effect) { const slot = cursor++; if (!effects[slot]) effects[slot] = effect() },
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => new URL(url).pathname.endsWith('/settings')
+    ? Response.json({ ok: true, revision: 'r', writable: true, defaults: {}, overrides: {}, effective: {}, fields: {} })
+    : Response.json({ status: 'checked', available: true, version: '9.9.9', installTarget: 'git+https://evil.example/repo.git#v9.9.9' })
+  try {
+    runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+      window: { __ModuleLoader__: { load: (value) => { definition = value } } },
+      document: { baseURI: 'http://127.0.0.1:8465/' }, URL, fetch: (...args) => globalThis.fetch(...args), Date, Number, JSON, Object, Array, Set,
+    })
+    definition.factory(() => React).apply({
+      effect: () => {}, locale: { register() {}, bind: () => (key) => key },
+      get: () => ({ installBundle: async (...args) => { installs.push(args); return { ok: true, value: {} } } }),
+      slots: { inject: (_name, fn) => fn(), register: (_options, component) => { Component = component } },
+    })
+    const page = Component({ view: 'page' })
+    const render = () => { cursor = 0; return page.type(page.props) }
+    const flatten = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(flatten)]
+    render(); await new Promise((resolve) => setTimeout(resolve, 20))
+    let nodes = flatten(render())
+    nodes.find((node) => node.type === 'button' && node.children.includes('update')).props.onClick()
+    nodes = flatten(render())
+    await nodes.find((node) => node.type === 'button' && node.children.includes('confirm')).props.onClick()
+    assert.equal(installs.length, 0)
+    assert.ok(flatten(render()).some((node) => node.children?.includes('installRefused')))
+  } finally { globalThis.fetch = originalFetch }
 })

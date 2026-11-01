@@ -2,6 +2,16 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0]
+
+### 新增与变更
+
+- 设置和在线更新移到本插件的详情页配置区，不再有独立标签；所有原本需要改配置文件的选项都可在 GUI 调整，保存后立即生效（仅启动延迟待下次启动）。
+- 取值分三层：内置默认值、`cordis.patch.yml` 的 `config`、GUI 保存的值（`$DSH_HOME/model-capability-detector/settings.json`）。字段可单独重置；保存带 revision，冲突时拒绝并载入最新值。
+- 配置改由插件自行校验，不再导出 `Config` schema，也不再需要 `@deepseek-ai/schemastery` peer 依赖；`cordis.patch.yml` 里的无效值被忽略并记日志，不影响加载。
+- 日志文件在 GUI 中必须位于 DSH 主目录内；目录 URL 拒绝非 http(s) 和带凭据的地址。
+- 手动更新由页面直接调用插件管理器 `installBundle`，目标固定为本仓库的稳定版 tag，并在页面与 Host 两侧校验。
+- `enabled: false` 不再卸载监听器，而是在运行时停止检测和模型页增强，因此可在 GUI 里随时重新启用。
 ## [1.3.0]
 
 ### 新增与变更
