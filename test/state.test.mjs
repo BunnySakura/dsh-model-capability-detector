@@ -67,7 +67,7 @@ test('Host update route is lazy and read-only; tool and UI share the same check'
   let route, tool, calls = 0
   const cleanups = []
   const services = { connection: { fetch: { register: (value) => { route = value; return async () => {} } } }, tools: { register: (value) => { tool = value } } }
-  globalThis.fetch = async () => { calls++; return Response.json({ tag_name: 'v9.0.0', draft: false, prerelease: false }) }
+  globalThis.fetch = async () => { calls++; return Response.json({ tag_name: 'v9.0.0', draft: false, prerelease: false, body: 'notes' }) }
   try {
     registerUpdates({ get: (key) => services[key], effect: (fn) => { cleanups.push(fn()) } }, {})
     const request = (input) => new Request('https://local.test/api/model-capability-detector/updates', input ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-model-capability-detector': '1' }, body: JSON.stringify(input) } : {})

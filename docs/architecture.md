@@ -22,7 +22,7 @@
 | `lib/http.js` | 按字节限制读取 JSON 响应 |
 | `lib/fsutil.js` | 先写临时文件再重命名的原子写入，缓存、回执和设置共用 |
 | `lib/update-host.js` | Host 路由与只读 Agent 工具 |
-| `lib/updates.js` | GitHub Releases 检查 |
+| `lib/updates.js` | GitHub Releases 检查；Release 说明为空时读取同名附注标签的注释 |
 
 ## 触发与写入流程
 

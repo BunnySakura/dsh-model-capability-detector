@@ -57,6 +57,62 @@ test('errors return bounded safe status and cancel error bodies', async () => {
   assert.equal(JSON.stringify(await checker.check()).includes('synthetic-private-data'), false)
 })
 
+const SHA = 'a'.repeat(40)
+/** A fetch double for an empty-bodied release; `tagRef` and `tagObject` choose the follow-up answers. */
+function emptyRelease({ tagRef, tagObject }) {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), init })
+    if (String(url) === RELEASES_URL) return Response.json({ ...release('1.5.0'), body: '' })
+    if (String(url).includes('/git/ref/tags/')) return tagRef ?? new Response('{}', { status: 404 })
+    return tagObject ?? new Response('{}', { status: 404 })
+  }
+  return { calls, fetchImpl }
+}
+
+test('an empty release body falls back to the annotated tag message', async () => {
+  const { calls, fetchImpl } = emptyRelease({
+    tagRef: Response.json({ object: { type: 'tag', sha: SHA } }),
+    tagObject: Response.json({ message: '  1.5.0\n\n新增与变更\n- 内容  \n' }),
+  })
+  const answer = await createUpdateChecker({ currentVersion: '1.4.0', fetchImpl }).check()
+  assert.equal(answer.status, 'checked')
+  assert.equal(answer.notes, '1.5.0\n\n新增与变更\n- 内容')
+  assert.deepEqual(calls.map((call) => call.url), [
+    RELEASES_URL,
+    'https://api.github.com/repos/BunnySakura/dsh-model-capability-detector/git/ref/tags/1.5.0',
+    `https://api.github.com/repos/BunnySakura/dsh-model-capability-detector/git/tags/${SHA}`,
+  ])
+  for (const call of calls) {
+    assert.equal(call.init.redirect, 'error')
+    assert.equal(call.init.headers.authorization, undefined)
+  }
+})
+
+test('tag fallback leaves notes empty for a lightweight tag, a failed request, or a malformed object id', async () => {
+  const cases = [
+    { tagRef: Response.json({ object: { type: 'commit', sha: SHA } }) },
+    {},
+    { tagRef: Response.json({ object: { type: 'tag', sha: '../../etc' } }) },
+    { tagRef: Response.json({ object: { type: 'tag', sha: SHA } }), tagObject: new Response('not json', { status: 200 }) },
+    { tagRef: Response.json({ object: { type: 'tag', sha: SHA } }), tagObject: Response.json({ message: 42 }) },
+  ]
+  for (const doubles of cases) {
+    const answer = await createUpdateChecker({ currentVersion: '1.4.0', fetchImpl: emptyRelease(doubles).fetchImpl }).check()
+    assert.equal(answer.status, 'checked', 'the update check itself still succeeds')
+    assert.equal(answer.notes, '')
+  }
+})
+
+test('tag fallback message is bounded, and a written release body skips the extra requests', async () => {
+  const long = emptyRelease({ tagRef: Response.json({ object: { type: 'tag', sha: SHA } }), tagObject: Response.json({ message: 'x'.repeat(50000) }) })
+  assert.equal((await createUpdateChecker({ currentVersion: '1.4.0', fetchImpl: long.fetchImpl }).check()).notes.length, 12000)
+  const calls = []
+  const written = createUpdateChecker({ currentVersion: '1.2.0', fetchImpl: async (url) => { calls.push(String(url)); return Response.json(release()) } })
+  assert.equal((await written.check()).notes.includes('release notes'), true)
+  assert.deepEqual(calls, [RELEASES_URL])
+})
+
 test('cancelled checker sends no request', async () => {
   const controller = new AbortController()
   controller.abort()
