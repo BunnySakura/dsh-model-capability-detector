@@ -107,4 +107,4 @@ DSH 的发现结果结构不传递推理等级。插件在内存里缓存解析�
 - 公开来源只用固定的 URL（models.dev 地址可配置，但只接受不含凭据的 http(s)），请求不带凭据，响应有字节上限。
 - 日志与诊断在写入边界统一脱敏，不输出原始错误对象、请求头或响应体。
 - 更新目标由代码拼接，只指向本项目仓库的稳定版标签，不接受外部传入的地址。
-- 开发检出目录不提供更新。`isDevCheckout`（`lib/update-host.js`）在插件目录不在 `node_modules` 内，或其下有 `.git` 时为真，Host 在 `/updates` 返回 `linked: true`，设置页据此隐藏「更新」按钮，`installUpdate` 也会拒绝。原因：profile 用 `link:` 指向工作目录时，`node_modules` 里的条目是指向它的 Junction，插件管理器（pnpm）替换时在 Windows 上报 `EPERM`，并可能沿链接清理工作目录里的文件。
+- 开发检出目录不提供更新。`isDevCheckout`（`lib/update-host.js`）在插件目录不在 `node_modules` 内，或其下有 `.git` 时为真，Host 在 `/updates` 返回 `linked: true`，设置页据此隐藏「更新」按钮，`installUpdate` 也会拒绝。原因：profile 用 `link:` 指向工作目录时，`node_modules` 里的条目是指向它的 Junction，插件管理器（pnpm）替换时在 Windows 上报 `EPERM`；失败后开发目录的 `.git` 曾少了几个文件，推断是 pnpm 沿链接清理所致（细节见[开发与发布](development.md)）。

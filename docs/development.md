@@ -82,9 +82,9 @@ npm pack --dry-run --json | node scripts/check-pack.mjs
 发布步骤：
 
 1. 更新 `package.json` 的 `version`，在 `CHANGELOG.md` 写入该版本条目。
-2. 跑完整测试，`pnpm pack --dry-run` 检查清单。
+2. 跑完整测试和 `node scripts/privacy-scan.mjs`，用 `npm pack --dry-run --json | node scripts/check-pack.mjs` 检查包清单。
 3. 提交，再按上节写附注标签。
-4. 推送提交和标签，建 Release，说明框留空。压缩包不是必需的：安装目标直接指向 git 标签，不读取 Release 附件。
+4. 先推送提交，等 CI 通过。再推送标签，建 Release，说明框留空。压缩包不是必需的：安装目标直接指向 git 标签，不读取 Release 附件。
 
 ## 公开仓库的隐私检查
 
@@ -124,8 +124,26 @@ gitleaks 的配置是仓库根目录的 `.gitleaks.toml`：保留全部默认规
 
 ## 本地开发安装
 
-不要用 profile 的 `link:` 依赖安装正在开发的插件，再用设置页「更新」更新它。`link:` 在 `node_modules` 里是指向工作目录的 Junction：Windows 上插件管理器替换它会报 `EPERM`，并可能沿链接清理工作目录里的文件（曾丢失 `.git` 的 `HEAD`、`config`、`index`）。插件检测到自己位于开发检出目录时不提供更新，更新开发副本请直接在工作目录里用 git。
-推送前如果发现 `git` 报「不是 Git 仓库」，先看 `.git` 里是否少了这三个文件，历史和引用通常还在。
+不要用 profile 的 `link:` 依赖安装正在开发的插件，再通过设置页或插件市场更新它。`link:` 在 `node_modules` 里是指向工作目录的 Junction。Windows 上插件管理器（pnpm）替换这个目录时报 `EPERM`；失败之后，开发目录的 `.git` 里曾三次少了 `HEAD`、`config`、`index`，工作区文件没有受损，`objects` 和 `refs` 也在。
+
+原因是推断，没有复现：pnpm 的 `renameOverwrite` 在重命名遇到 `EPERM` 时，会对目标路径执行 `rimraf` 并忽略它的错误，然后重试约 60 秒。目标是 Junction 时，`rimraf` 可能沿链接删开发目录，在 Git 的只读对象文件处停下，缺失的文件正好是目录顺序里排在 `objects` 之前的那几个。在隔离目录里用同一版 pnpm 做过替换 `link:`、移除依赖、残留 Junction 后重装三种复现，pnpm 都报「已是最新」，没有走到替换步骤。
+
+做法：
+
+- 测试安装流程时，用开发目录的副本，或先摘掉 Junction：`cmd /c rmdir <node_modules 里的路径>`。不要对 Junction 做递归删除。
+- 插件检测到自己位于开发检出目录时不提供更新（见[架构](architecture.md)）。更新开发副本，直接在工作目录里用 git。
+- 如果 `git` 报「不是 Git 仓库」，先看 `.git` 里是否少了 `HEAD`、`config`、`index`。已推送的内容都在 GitHub 上，不需要事先备份：补回这三个文件（`HEAD` 写 `ref: refs/heads/main`，`config` 配好 `origin`），再 `git reset` 重建索引，或者直接重新克隆。要留意的只有尚未推送的提交和标签，先确认 `git log origin/main..HEAD` 还能看到它们。
+
+## 排错与经验
+
+- **CI 里的工具版本以 CI 实际安装的为准。** GitHub Action 常带着自己的默认版本：`gitleaks-action@v2` 默认装 8.24.3，它不应用 `.gitleaks.toml` 里的放行，本地用更新的版本验证会得出相反结论。在工作流里固定版本，推送前用同一版本、同一条命令在本地复现。
+- **用退出码判断扫描是否通过，不要匹配输出文字。** gitleaks 的「no leaks found」也包含「leaks found」，按文字匹配会把通过当成失败。
+- **检测类工具要正反都验证。** 干净的输入不报，有问题的输入必须报；放行规则要再试一个不同的值，确认它仍被报出，没有放过头。
+- **测试里的假密钥会触发扫描器。** 优先不写成像密钥的字面量；必须写时，在放行配置里按精确值放行，不放行整个目录或文件。
+- **URL 里的用户信息会被邮箱规则误报。** `https://user:pass@host` 里的 `pass@host` 形似邮箱，邮箱规则要排除前面带 `:` 或 `/` 的情况。
+- **先推送提交，CI 通过后再推送标签和建 Release。** 为修 CI 而移动已推送的标签，会让装过旧标签的人拿到不同的内容。
+- **破坏性实验放在临时目录里，并隔离环境。** 把 `LOCALAPPDATA`、`APPDATA`、`XDG_*`、`PNPM_HOME` 和 pnpm 的 `--store-dir` 指到临时目录，只对当前进程设置；清理前先摘掉其中的 Junction，再删除目录，并检查路径确实在临时目录下。
+- **实验没走到被测的步骤，就不能当作「没问题」。** pnpm 报「已是最新」时，要先让它真的执行替换，再下结论。
 
 ## 文档约定
 
