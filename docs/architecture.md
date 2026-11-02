@@ -58,6 +58,24 @@ DSH 没有「模型发现完成」事件，也不允许同一命名空间注册�
 
 DSH 的发现结果结构不传递推理等级。插件在内存里缓存解析后的能力，最多 8 份、5 分钟，保存草稿时复用。缓存键是端点、协议、凭据和自定义头的 SHA-256 指纹，不保存原始密钥和响应体。
 
+#### 已知限制：发现结果没有推理等级
+
+这是 DSH 的接口约束，不是插件可以绕过的行为。设置页在推理分组下有一句说明，让「导入后开关是关的」不被读成检测失败。
+
+- `llm.discoverModels` 的返回结构固定为 `id`、`name`、`contextWindow`、`maxTokens`、`inputModalities` 五个字段。DSH 用 zod schema 校验这条 RPC 结果，多给的键不会到达界面。
+- DSH 模型页的 `adopt()` 只把这五个字段拷进草稿行，`reasoningEfforts` 因此保持未设置。
+- 草稿行的推理状态由模型页的 `readEfforts(model)` 读 `model.reasoningEfforts` 得出，所以「获取可用模型」之后推理开关必然是关的。
+
+插件因此把等级写进**已保存的** `providers`：保存卡片或跑一轮检测后，重开模型页才会显示。`lib/discovery.js` 的包装有意不透传 `reasoningEfforts`，因为多传只会被 schema 丢掉，还可能在契约收紧时让整条发现请求失败。
+
+如果将来 DSH 放宽这条契约，按下面三步接上即可：
+
+1. `lib/discovery.js` 的 `models.map(...)` 里增加 `...(reasoningEfforts === undefined ? {} : { reasoningEfforts })`。
+2. 确认模型页的 `adopt()` 与 `readEfforts()` 会读取该字段；只放宽 schema 而不推进草稿映射没有效果。
+3. 为「发现结果带等级」补一条 `test/plugin.test.mjs` 用例，并删掉设置页的说明与 `updates.test.mjs` 里对应的两条断言。
+
+判断契约是否已放宽，看 DSH 的 RPC 结果 schema 是否包含推理字段，不要以 `adopt()` 是否拷贝为准：两者可以不同步。
+
 ## 设置存储
 
 取值分三层，后者覆盖前者：内置默认值、`cordis.patch.yml` 里本插件的 `config`、GUI 保存的值。

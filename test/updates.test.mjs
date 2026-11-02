@@ -449,6 +449,28 @@ test('the reasoning options are a drop-down and a switch, and the drop-down list
   } finally { await page.done() }
 })
 
+test('the reasoning section explains why an imported draft starts with the switch off', async () => {
+  const page = await mountSettings({})
+  try {
+    const nodes = page.render()
+    const note = nodes.find((node) => node.props?.['data-discovery-reasoning-note'])
+    assert.ok(note, 'the note is shown where the reasoning settings are')
+    assert.deepEqual(note.children, ['discoveryReasoningNote'], 'the copy comes from the locale table')
+  } finally { await page.done() }
+})
+
+test('the reasoning note is hidden when the Host does not describe the reasoning options', async () => {
+  const page = await mountSettings({}, (snapshot) => {
+    const fields = { ...snapshot.fields }
+    delete fields.reasoningPreset
+    delete fields.probeEnabled
+    return { ...snapshot, fields }
+  })
+  try {
+    assert.equal(page.render().some((node) => node.props?.['data-discovery-reasoning-note']), false, 'no reasoning section, no note')
+  } finally { await page.done() }
+})
+
 test('options an older Host does not describe are hidden with a notice, not shown as text boxes', async () => {
   const page = await mountSettings({}, (snapshot) => {
     const fields = { ...snapshot.fields }

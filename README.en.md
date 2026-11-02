@@ -112,6 +112,8 @@ The settings page's **Detection report** lists each provider and model with ever
 
 You can also pick **Preset for unknown levels** in the settings, so models the sources agree reason are filled automatically. It is off by default.
 
+**After fetch available models, why do context and image support appear but the reasoning switch stays off?** That is not a detection failure. DSH's discovery reply carries only the context window, maximum output and input types, with no reasoning field, so the model page has nothing to fill. The detector writes the levels into the saved provider configuration instead: save the card, or click **Detect again now**, then reopen the model page to see them; whether any level is known still depends on the sources. The settings page repeats this under the reasoning group. Once DSH adds a reasoning field to its discovery reply, an import can carry the levels directly.
+
 **Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched, with one exception: the starting reasoning levels `off/low/medium/high` that DSH's model page writes when you turn its reasoning switch on are replaced once the real levels are known. Turn off **Upgrade values this plugin wrote** to stop all of this.
 
 **How do I make it overwrite existing values?** Turn on `overwrite`, or clear the field and save.
