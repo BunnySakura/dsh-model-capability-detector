@@ -297,6 +297,27 @@ test('source ranks put a preset below every real source and a manual choice abov
   assert.equal(rankOf({ kind: 'manual' }) < UPGRADE_BELOW_RANK, false, 'a manual choice cannot')
 })
 
+test('changing the preset replaces what the previous preset wrote, because the user changed the default', () => {
+  const guessed = { off: null, high: 'high' }
+  const providers = { r: { models: [{ id: 'm', reasoningEfforts: guessed }] } }
+  const deepseek = { id: 'deepseek', efforts: { off: null, low: 'low', high: 'high', max: 'max' } }
+  const receipt = { value: guessed, source: { kind: 'preset', preset: 'toggle' } }
+  const swapped = run(() => answer({ state: 'yes' }), deepseek, new Map(), providers, { upgrade: true, receiptFor: () => receipt })
+  assert.deepEqual(swapped.providers.r.models[0].reasoningEfforts, deepseek.efforts, 'the new preset wins over the old one')
+  assert.deepEqual(swapped.upgrades.map((entry) => [entry.from, entry.to]), [['preset', 'preset']])
+  assert.equal(swapped.provenance[0].source.preset, 'deepseek')
+
+  // Saving the same preset again is not a change, so the row is left alone.
+  const same = run(() => answer({ state: 'yes' }), { id: 'toggle', efforts: guessed }, new Map(), providers, { upgrade: true, receiptFor: () => receipt })
+  assert.deepEqual(same.changes, [])
+
+  // The default still loses to a real source and never overrules a hand-picked value.
+  const real = run(() => answer({ state: 'yes' }, { safe: { reasoningEfforts: { low: 'low' } }, sources: { reasoningEfforts: { kind: 'original-provider-mirror' } } }), deepseek, new Map(), providers, { upgrade: true, receiptFor: () => receipt })
+  assert.deepEqual(real.providers.r.models[0].reasoningEfforts, { low: 'low' })
+  const manual = run(() => answer({ state: 'yes' }), deepseek, new Map(), providers, { upgrade: true, receiptFor: () => ({ value: guessed, source: { kind: 'manual' } }) })
+  assert.deepEqual(manual.providers.r.models[0].reasoningEfforts, guessed, 'a manual receipt is never outranked')
+})
+
 // ---- the probe --------------------------------------------------------------
 
 /** A fake OpenAI-compatible channel. */

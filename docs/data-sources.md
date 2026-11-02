@@ -82,6 +82,7 @@ DSH 对没有 `reasoningEfforts` 的模型，取内置目录里同名模型的�
 [data/presets.json](../data/presets.json) 里是几套完整的 `reasoningEfforts`：`openai`（low/medium/high）、`extended`（再加 xhigh）、`deepseek`（low/high/max）、`toggle`（只有开和关）。预设是对渠道可接受取值的猜测，所以：
 
 - 默认不自动套用。`reasoningPreset` 设成某一套后，只有在「来源认为模型会推理」且没有任何等级来源、原厂记录之间也没有分歧时才填，来源档位是 `preset`，等级最低，之后出现任何真实来源都会升级替换。
+- 换一套预设就是换一个默认值。之前那套预设填进去、且值没被改过的行，会改用新的一套，并在日志里记成一次升级（`preset → preset`）。真正的来源仍然优先，手动套用的值仍然不动。改回「不套用」不会删除已经填入的等级。
 - 在检测报告里，对没有等级的模型可以手动选一套套用。手动套用的来源档位是 `manual`，永远不会被替换。
 - DSH 会把 `high` 这样的值作为 `reasoning_effort` 发给网关。DSH 认得的网关（DeepSeek、智谱、Together、OpenRouter 等）会自动换成各自的参数格式；其他自定义网关统一走 `reasoning_effort`。通义千问等需要 `enable_thinking` 的网关，要靠 DSH 的 `compat.thinkingFormat`，本插件不设置它。
 

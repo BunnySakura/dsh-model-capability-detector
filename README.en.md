@@ -44,7 +44,7 @@ You can also give the plugin a `config` in your profile's `cordis.patch.yml`. Pr
 | `catalogNumbers` | `true` | Allow public sources to fill context and maximum output |
 | `catalogNumericStrategy` | `official` | `official` is the tiered rule; `minimum` and `consensus` are legacy modes |
 | `thirdPartySources` | `true` | Allow consulting OpenRouter and LiteLLM |
-| `reasoningPreset` | `none` | Preset filled automatically when the sources agree a model reasons but name no level (`openai`, `extended`, `deepseek`, `toggle`); `none` fills nothing |
+| `reasoningPreset` | `none` | Preset filled automatically when the sources agree a model reasons but name no level (`openai`, `extended`, `deepseek`, `toggle`); `none` fills nothing. Choosing another preset replaces the levels the previous one wrote and nobody edited |
 | `probeEnabled` | `false` | Offer **Probe channel** in the report; it sends a few billable requests to your provider and never runs by itself |
 | `openrouterUrl` | `https://openrouter.ai/api/v1/models` | OpenRouter model list address. Point it at a mirror if the default is unreachable; http(s) without credentials only |
 | `litellmUrl` | `model_prices_and_context_window.json` in the LiteLLM repository | LiteLLM model table address, same rules |

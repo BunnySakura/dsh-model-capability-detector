@@ -820,6 +820,33 @@ test('the preset setting fills levels only for models the channel says reason, a
   }
 })
 
+test('changing the preset through the settings route applies without a rescan', async () => {
+  const listingBody = { data: [{ id: 'a', supported_parameters: ['reasoning'], context_length: 1000 }] }
+  const home = await mkdtemp(join(tmpdir(), 'mcd-preset-swap-'))
+  const stub = stubFetch(listingBody)
+  const routes = new Map()
+  try {
+    const { ctx, state } = createHarness({ homePath: home, routes, providers: { r: chatRoute([{ id: 'a' }], 'openai-responses') } })
+    apply(ctx, { startupDelayMs: 0, debounceMs: 0, catalogFallback: false, reasoningPreset: 'toggle' })
+    await settle()
+    assert.deepEqual(state.providers.r.models[0].reasoningEfforts, presetEfforts('toggle'))
+
+    // Exactly what the settings page posts: the revision it read and the new preset.
+    const settings = routes.get('/api/model-capability-detector/settings')
+    const read = await (await settings.fetch(new Request('https://local.test/s'))).json()
+    const saved = await (await settings.fetch(new Request('https://local.test/s', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-model-capability-detector': '1' },
+      body: JSON.stringify({ revision: read.revision, set: { reasoningPreset: 'deepseek' }, unset: [] }),
+    }))).json()
+    assert.equal(saved.ok, true)
+    await settle()
+    assert.deepEqual(state.providers.r.models[0].reasoningEfforts, presetEfforts('deepseek'), 'the new preset replaced the old guess')
+    const receipts = JSON.parse(await readFile(join(home, 'cache', 'model-capability-detector', 'provenance.json'), 'utf8')).receipts
+    assert.equal(receipts[provenanceKey('r', 'a', 'reasoningEfforts')].source.preset, 'deepseek', 'the receipt follows the new preset')
+  } finally { stub.restore(); await rm(home, { recursive: true, force: true }) }
+})
+
 test('the report and settings routes describe presets by level name only', async () => {
   const routes = new Map()
   apply(createHarness({ routes }).ctx, { startupDelayMs: 3600000, catalogFallback: false, probeEnabled: true, reasoningPreset: 'toggle' })

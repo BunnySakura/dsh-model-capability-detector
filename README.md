@@ -44,7 +44,7 @@ https://github.com/BunnySakura/dsh-model-capability-detector
 | `catalogNumbers` | `true` | 允许公开来源补上下文和最大输出 |
 | `catalogNumericStrategy` | `official` | `official` 为分档取值；`minimum`、`consensus` 为旧版兼容模式 |
 | `thirdPartySources` | `true` | 允许参考 OpenRouter 和 LiteLLM |
-| `reasoningPreset` | `none` | 来源一致认为模型会推理、却没有等级时自动填入的预设（`openai`、`extended`、`deepseek`、`toggle`），`none` 为不填 |
+| `reasoningPreset` | `none` | 来源一致认为模型会推理、却没有等级时自动填入的预设（`openai`、`extended`、`deepseek`、`toggle`），`none` 为不填。换一套预设会替换上一套填过、且没被改过的等级 |
 | `probeEnabled` | `false` | 在检测报告里提供「探测渠道」按钮，会向渠道发少量计费请求，从不自动运行 |
 | `openrouterUrl` | `https://openrouter.ai/api/v1/models` | OpenRouter 模型列表地址。默认地址访问不了时可改成镜像，只接受不含凭据的 http(s) |
 | `litellmUrl` | LiteLLM 仓库里的 `model_prices_and_context_window.json` | LiteLLM 模型表地址，规则同上 |
