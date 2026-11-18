@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-capability-detector",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "type": "module",
   "description": "DSH plugin that fills in a third-party provider's model context window, maximum output, image input and reasoning levels from the provider API, original-provider documentation and agreeing third-party sources.",
   "keywords": [

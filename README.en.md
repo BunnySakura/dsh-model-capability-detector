@@ -55,7 +55,7 @@ You can also give the plugin a `config` in your profile's `cordis.patch.yml`. Pr
 | `catalogMaxBytes` | `16777216` | Catalog size limit |
 | `catalogTtlMs` | `604800000` | Public-source cache lifetime, 7 days |
 | `logging` | `false` | Send sanitized diagnostics to the DSH logger |
-| `logFile` | `""` | Diagnostic log path, relative to DSH home; a non-empty path also enables logging. Saving it on the settings page requires a path inside DSH home |
+| `logFile` | `""` | Diagnostic path ending in `.log`, relative to DSH home; a non-empty path also enables logging. Saving it on the settings page requires a path inside DSH home |
 | `updateCheckOnStartup` | `false` | Check for a new version about 10 seconds after startup |
 
 An example in `cordis.patch.yml`:
@@ -82,9 +82,11 @@ Each field takes the first available value from this list; higher entries win:
 
 Reasoning levels come only from the provider API and original-provider records. If the provider lists `deepseek-v4.1-flash` while the original provider only documents the dated `deepseek-v4.1-flash-1017`, and every dated snapshot of that vendor states the same levels, the levels are inferred and shown as "Same-line snapshots" in the report. Context window and maximum output are never inferred this way. An original specification describes the model itself and **does not guarantee a third-party provider exposes the same limits**.
 
-When a model name does not match, add one line per alias under **Model name aliases** in the form `provider's name = standard model name`. Aliases match exactly and never chain.
+When a model name does not match, add one line per alias under **Model name aliases** in the form `provider's name = standard model name`. Aliases match exactly, never chain and only redirect metadata lookup; the request ID stays unchanged. Dates and variants such as `:free` retain their identity. Add an explicit alias only after confirming the base model specifications apply.
 
 The exact rules are in [Data sources and value rules](docs/data-sources.md).
+
+Keep model capacity separate from compaction policy; see the [rationale and context policy](docs/context-policy.md) (Chinese).
 
 ## Detection report
 
@@ -114,7 +116,7 @@ You can also pick **Preset for unknown levels** in the settings, so models the s
 
 **After fetch available models, why do context and image support appear but the reasoning switch stays off?** That is not a detection failure. DSH's discovery reply carries only the context window, maximum output and input types, with no reasoning field, so the model page has nothing to fill. The detector writes the levels into the saved provider configuration instead: save the card, or click **Detect again now**, then reopen the model page to see them; whether any level is known still depends on the sources. The settings page repeats this under the reasoning group. Once DSH adds a reasoning field to its discovery reply, an import can carry the levels directly.
 
-**Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched, with one exception: the starting reasoning levels `off/low/medium/high` that DSH's model page writes when you turn its reasoning switch on are replaced once the real levels are known. Turn off **Upgrade values this plugin wrote** to stop all of this.
+**Why did a value change although I never edited it?** When a stronger source appears, a value the plugin wrote earlier from a weaker one is upgraded. Values you typed or edited are never touched. A value matching DSH's starting reasoning template is also preserved: only a matching plugin receipt authorizes an automatic upgrade. Turn off **Upgrade values this plugin wrote** to stop all of this.
 
 **How do I make it overwrite existing values?** Turn on `overwrite`, or clear the field and save.
 

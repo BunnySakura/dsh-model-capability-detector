@@ -18,11 +18,11 @@ const openrouter = (entries) => source('openrouter', { data: entries })
 const litellm = (table) => source('litellm', table)
 const empty = toLookup(undefined)
 
-test('name keys fold separators, provider prefixes and variants, but not short numeric suffixes', () => {
-  assert.equal(nameKeys('anthropic/claude-sonnet-4.5:free').compact, 'claudesonnet45')
-  assert.equal(nameKeys('claude-sonnet-4-5-20250929').family, 'claudesonnet45')
+test('name keys fold cosmetic separators but preserve dates and variants', () => {
+  assert.equal(nameKeys('anthropic/claude-sonnet-4.5:free').compact, 'claudesonnet45:free')
+  assert.equal(nameKeys('claude-sonnet-4-5-20250929').family, 'claudesonnet4520250929')
   assert.equal(nameKeys('claude-sonnet-4-5-20250929').compact, 'claudesonnet4520250929')
-  assert.equal(nameKeys('gpt-4o-2024-08-06').family, 'gpt4o')
+  assert.equal(nameKeys('gpt-4o-2024-08-06').family, 'gpt4o20240806')
   assert.equal(nameKeys('deepseek-v4.1-flash-1017').family, 'deepseekv41flash1017')
   assert.notEqual(nameKeys('deepseek-v4.1-flash-0423').family, nameKeys('deepseek-v4.1-flash-1017').family)
 })
@@ -73,14 +73,16 @@ test('a disagreeing third-party source blocks the value instead of picking one',
   assert.equal(answer.reasons.contextWindow, 'third-party-conflict')
 })
 
-test('the primary listing outranks its variants inside one source', () => {
+test('base models and variants resolve separately inside one source', () => {
   const lookup = openrouter([
     { id: 'vendor/model-p:free', context_length: 32000 },
     { id: 'vendor/model-p', context_length: 128000 },
   ])
   assert.equal(voteFor(lookup, 'model-p').context, 128000)
   const split = openrouter([{ id: 'vendor/model-q:a', context_length: 1000 }, { id: 'vendor/model-q:b', context_length: 2000 }])
-  assert.equal(voteFor(split, 'model-q').context, 'conflict')
+  assert.equal(voteFor(split, 'model-q'), undefined)
+  assert.equal(voteFor(split, 'model-q:a').context, 1000)
+  assert.equal(voteFor(split, 'model-q:b').context, 2000)
 })
 
 test('models.dev votes with its publishers\u0027 agreed value and abstains when they split evenly', () => {

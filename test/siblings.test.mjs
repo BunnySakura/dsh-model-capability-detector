@@ -24,9 +24,10 @@ test('an unpinned name inherits reasoning levels from its verified snapshot, and
   assert.equal(answer.status, 'resolved')
 })
 
-test('gateway prefixes and variants still reach the snapshot line; other lines and tagged names do not', () => {
+test('gateway prefixes reach the snapshot line; variants, other lines and tagged names do not', () => {
   const inherited = (id) => resolveTiered(toLookup(undefined), undefined, id).safe.reasoningEfforts
-  assert.deepEqual(inherited('gateway/DeepSeek-V4.1-Flash:free'), efforts)
+  assert.deepEqual(inherited('gateway/DeepSeek-V4.1-Flash'), efforts)
+  assert.equal(inherited('gateway/DeepSeek-V4.1-Flash:free'), undefined)
   assert.equal(inherited('deepseek-v4.1-flash-0423'), undefined, 'a different snapshot never borrows')
   assert.equal(inherited('deepseek-v4.2-flash'), undefined)
   assert.equal(inherited('dsv4.1flash'), undefined)
